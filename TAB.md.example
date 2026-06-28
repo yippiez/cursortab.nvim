@@ -1,0 +1,13 @@
+# TAB.md (example)
+
+A project pins this file at its root; cursortab injects it into completion
+context. Keep it short and high-signal — conventions, custom commands, helpers.
+
+## Custom CLI
+`compute` — our infra CLI.
+- `compute runtime start --gpu <t4|a100> --timeout <dur>`  -> prints a session id
+- `compute exec "<session-id>" -- <cmd>`                   -> run a command in the session
+
+## Conventions
+- Wrap python one-liners in bash via the `run_py "<code>"` helper (see lib/py.sh).
+- Pipeline steps are bash functions composed with shell pipes.
