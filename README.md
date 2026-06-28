@@ -2,6 +2,8 @@
 
 A Neovim plugin that provides edit completions and cursor predictions.
 
+Drop a `TAB.md` at your workspace root to inject project conventions (custom CLIs, helpers, naming rules) into the completion prompt.
+
 > [!NOTE]
 >
 > **Help improve completions** by contributing anonymous usage data to our
