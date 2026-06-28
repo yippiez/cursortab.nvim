@@ -1,0 +1,15 @@
+{
+  "name": "python-function-in-bash",
+  "description": "Define a bash function wrapping a python snippet, matching the run_py convention from sibling files.",
+  "target": "repo/pipeline.sh",
+  "cursor": "eof",
+  "context_files": [
+    "repo/lib/text_ops.sh",
+    "repo/lib/py.sh"
+  ],
+  "expect": {
+    "must_contain": ["run_py"],
+    "should_contain": ["count_tokens"],
+    "must_not_contain": ["pip install"]
+  }
+}
