@@ -12,6 +12,7 @@ import (
 	"cursortab/engine"
 	"cursortab/logger"
 	"cursortab/provider"
+	"cursortab/tabmd"
 	"cursortab/types"
 )
 
@@ -117,6 +118,16 @@ func buildRepoContext(b *strings.Builder, p *Provider, ctx *provider.RequestStat
 	b.WriteString(repoName)
 	b.WriteString(workspace)
 	b.WriteString("\n")
+
+	// Project doc (TAB.md) - static project conventions. Placed early in the
+	// repo block so it stays stable across edits.
+	if doc := tabmd.Read(current.WorkspacePath); doc != "" {
+		b.WriteString(fileSep)
+		b.WriteString(tabmd.DocName)
+		b.WriteString("\n")
+		b.WriteString(doc)
+		b.WriteString("\n")
+	}
 
 	// Recent files
 	if recent, ok := sourcectx.Find[sourcectx.RecentFiles](input.Materials); ok {

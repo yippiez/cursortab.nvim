@@ -6,6 +6,8 @@ import (
 	sourcectx "cursortab/ctx"
 	"cursortab/provider"
 	"cursortab/types"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -216,6 +218,58 @@ func TestBuildPrompt_RepoContext(t *testing.T) {
 	assert.True(t, strings.Contains(req.Prompt, "Enclosing scope: func main()"), "should have enclosing scope")
 	assert.True(t, strings.Contains(req.Prompt, "<|file_sep|>main.go\n"), "should have current file header")
 	assert.True(t, strings.Contains(req.Prompt, "<PRE>hello<SUF> world<MID>"), "should have FIM tokens at end")
+}
+
+func TestBuildPrompt_RepoContextWithTabMD(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "TAB.md"), []byte("Use the run_py helper for python."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	config := &types.ProviderConfig{
+		ProviderModel: "test-model",
+		FIMTokens: &types.FIMTokenConfig{
+			Prefix:   "<PRE>",
+			Suffix:   "<SUF>",
+			Middle:   "<MID>",
+			RepoName: "<|repo_name|>",
+			FileSep:  "<|file_sep|>",
+		},
+	}
+	p := NewProvider(config)
+
+	input := completionInput([]string{"hello world"}, 1, 5)
+	input.Current.WorkspacePath = workspace
+	input.Current.File.Path = "main.go"
+	ctx := stateForInput(input)
+
+	req := buildPromptForTest(p, ctx)
+
+	assert.True(t, strings.Contains(req.Prompt, "<|file_sep|>TAB.md\n"), "should have TAB.md pseudo-file")
+	assert.True(t, strings.Contains(req.Prompt, "Use the run_py helper for python."), "should contain TAB.md content")
+}
+
+func TestBuildPrompt_NoTabMDWhenAbsent(t *testing.T) {
+	config := &types.ProviderConfig{
+		ProviderModel: "test-model",
+		FIMTokens: &types.FIMTokenConfig{
+			Prefix:   "<PRE>",
+			Suffix:   "<SUF>",
+			Middle:   "<MID>",
+			RepoName: "<|repo_name|>",
+			FileSep:  "<|file_sep|>",
+		},
+	}
+	p := NewProvider(config)
+
+	input := completionInput([]string{"hello world"}, 1, 5)
+	input.Current.WorkspacePath = t.TempDir() // no TAB.md present
+	input.Current.File.Path = "main.go"
+	ctx := stateForInput(input)
+
+	req := buildPromptForTest(p, ctx)
+
+	assert.False(t, strings.Contains(req.Prompt, "TAB.md"), "should omit TAB.md when absent")
 }
 
 func TestBuildPrompt_NoRepoContextWithoutTokens(t *testing.T) {
