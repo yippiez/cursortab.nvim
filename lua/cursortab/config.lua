@@ -289,7 +289,10 @@ local valid_addition_styles = { dimmed = true, highlight = true }
 ---@param path string Current path for error messages
 local function validate_config_keys(user_cfg, default_cfg, path)
 	for key, value in pairs(user_cfg) do
-		if default_cfg[key] == nil then
+		-- fim_tokens is a documented optional provider key that lives only as a
+		-- comment in default_config; the rest of the config layer handles it
+		-- (dedicated validation + Qwen auto-detect), so don't reject it here.
+		if default_cfg[key] == nil and not (path == "provider." and key == "fim_tokens") then
 			error(string.format("[cursortab.nvim] Unknown config option: %s%s", path, key))
 		end
 		-- Recursively validate nested tables (skip lists with numeric keys)
