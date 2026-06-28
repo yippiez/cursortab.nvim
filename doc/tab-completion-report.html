@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cursortab.nvim — How Tab Completion Works</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#30363d;
+    --fg:#e6edf3; --muted:#9aa7b4; --accent:#58a6ff; --accent2:#7ee787;
+    --tok:#ffa657; --warn:#f0883e; --pink:#f778ba; --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 24px 96px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.5px}
+  h2{font-size:22px;margin:48px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  h3{font-size:17px;margin:28px 0 10px;color:var(--accent)}
+  p{color:var(--fg)} .sub{color:var(--muted);margin:0 0 8px}
+  code{font-family:var(--mono);font-size:.88em;background:#1f2733;padding:1px 5px;border-radius:4px;color:#cdd9e5}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .lede{color:var(--muted);font-size:16px;max-width:72ch}
+  .tag{display:inline-block;font-family:var(--mono);font-size:12px;background:#1f2733;border:1px solid var(--border);
+    border-radius:999px;padding:2px 10px;margin:2px 4px 2px 0;color:var(--muted)}
+  /* token chips */
+  .tok{font-family:var(--mono);color:var(--tok);background:#2a1f12;border:1px solid #5a3d1f;
+    border-radius:4px;padding:0 5px;white-space:nowrap}
+  .mk{font-family:var(--mono);color:var(--pink);background:#2a1422;border:1px solid #5a2440;border-radius:4px;padding:0 5px}
+  /* code / prompt boxes */
+  pre{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow:auto;
+    font-family:var(--mono);font-size:13px;line-height:1.55;color:#cdd9e5}
+  pre .c{color:#6e7781}                /* comment */
+  pre .t{color:var(--tok)}             /* token */
+  pre .h{color:var(--accent2)}         /* header / section */
+  pre .m{color:var(--pink)}            /* marker */
+  pre .g{color:#9aa7b4}               /* generated/placeholder */
+  .file{font-family:var(--mono);font-size:12px;color:var(--muted);margin:2px 0 8px}
+  .file b{color:var(--accent2);font-weight:600}
+  /* pipeline */
+  .flow{counter-reset:step;margin:18px 0}
+  .step{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:14px 18px 14px 56px;margin:10px 0}
+  .step::before{counter-increment:step;content:counter(step);position:absolute;left:14px;top:14px;
+    width:28px;height:28px;border-radius:50%;background:var(--accent);color:#04121f;font-weight:700;
+    display:flex;align-items:center;justify-content:center;font-size:14px}
+  .step h4{margin:0 0 3px;font-size:15px}
+  .step .where{font-family:var(--mono);font-size:12px;color:var(--warn)}
+  .step p{margin:6px 0 0;color:var(--muted);font-size:14px}
+  /* tables */
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--border);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--fg);font-weight:600}
+  td code{background:#1f2733}
+  tr:nth-child(even) td{background:#11161d}
+  /* callout */
+  .note{background:#13202e;border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:12px 16px;margin:16px 0;color:#c7d3df;font-size:14px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:10px 0 0;font-size:13px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:740px){.two{grid-template-columns:1fr}}
+  hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+  .toc{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 22px;margin:24px 0}
+  .toc ol{margin:6px 0 0;padding-left:22px;columns:2;color:var(--muted)}
+  .toc a{color:var(--fg)}
+  footer{margin-top:64px;color:var(--muted);font-size:13px;border-top:1px solid var(--border);padding-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>How Tab Completion Works in cursortab.nvim</h1>
+  <p class="sub">A walk through the model-completion pipeline — and exactly how the prompt tokens are defined and assembled.</p>
+  <p class="lede">cursortab is a Neovim edit-completion plugin. A thin Lua layer in the editor talks to a Go
+  <em>server</em> (the daemon) over RPC. The server gathers context, builds a model prompt out of carefully
+  defined token markers, calls a completion model over an OpenAI-style API, then turns the raw text back into
+  staged, accept-able edits. This report covers that round trip end to end.</p>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#ffa657"></span> FIM token (configured)</span>
+    <span><span class="dot" style="background:#f778ba"></span> hard-coded marker</span>
+    <span><span class="dot" style="background:#7ee787"></span> section header</span>
+    <span><span class="dot" style="background:#6e7781"></span> model output / placeholder</span>
+  </div>
+
+  <div class="toc">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#pipeline">The pipeline, step by step</a></li>
+      <li><a href="#tokens">How the tokens are defined</a></li>
+      <li><a href="#fim">FIM prompt assembly (two modes)</a></li>
+      <li><a href="#sweep">Sweep prompt assembly (3 sections)</a></li>
+      <li><a href="#context">The cross-file context block</a></li>
+      <li><a href="#request">The wire request &amp; stop tokens</a></li>
+      <li><a href="#after">After the model: diff → stages → accept</a></li>
+    </ol>
+  </div>
+
+  <!-- ============ PIPELINE ============ -->
+  <h2 id="pipeline">1 · The pipeline, step by step</h2>
+  <p>One keystroke (or a manual trigger) flows through these stages. Steps 1–6 happen in the editor/engine,
+  7–10 are provider-side prompt &amp; model work, and 11–14 turn the answer into visible edits.</p>
+
+  <div class="flow">
+    <div class="step"><h4>Event arrives</h4>
+      <div class="where">server/engine/events.go</div>
+      <p>A buffer change, idle timer, or manual <code>Ctrl-Space</code> raises an event. Automatic triggers are debounced; a manual trigger sets a <code>manual</code> flag that bypasses suppression.</p></div>
+
+    <div class="step"><h4>Gating / suppression</h4>
+      <div class="where">server/engine/request.go · suppress.go</div>
+      <p>Cheap checks decide whether it's even worth calling the model: no edits since save, cursor in a disabled treesitter scope, mid-line with meaningful suffix, a single-char deletion (typo fix), or a match against the recently-rejected cache.</p></div>
+
+    <div class="step"><h4>Capture the snapshot</h4>
+      <div class="where">server/ctx/model.go · <b>CurrentSnapshot</b></div>
+      <p>The current buffer state is frozen: <code>WorkspacePath</code>, <code>File.Path</code>/<code>Lines</code>, 1-indexed <code>Cursor.Row</code>, 0-indexed <code>Cursor.Col</code>, and viewport bounds.</p></div>
+
+    <div class="step"><h4>Collect context materials</h4>
+      <div class="where">server/ctx/materials.go</div>
+      <p>Each provider declares what it needs. The engine collects only those: treesitter scope, recent-file retrieval chunks, edit/diff history, git diff, diagnostics, recent user actions — and the project <code>TAB.md</code>.</p></div>
+
+    <div class="step"><h4>Pick &amp; dispatch the provider</h4>
+      <div class="where">server/engine/engine.go · provider/flow.go</div>
+      <p>The configured provider (fim, sweep, zeta, inline, …) is invoked via <code>Complete()</code> (batch) or <code>StreamCompletion()</code> (streaming).</p></div>
+
+    <div class="step"><h4>Build the request window</h4>
+      <div class="where">server/provider/flow.go · <b>RequestWindow</b></div>
+      <p>The buffer is trimmed to a window around the cursor (bounded by context size, snapped to treesitter ranges). This <em>window</em> is what the model actually sees: <code>Window.Lines</code>, <code>Window.Start</code>, <code>Window.CursorLine</code>.</p></div>
+
+    <div class="step"><h4>Build the prompt</h4>
+      <div class="where">provider/<b>fim/fim.go</b> · <b>sweep/sweep.go</b> · <code>Build()</code></div>
+      <p>The provider assembles the token-delimited prompt string (see §3–§5). This is where the FIM / sweep markers get stitched around your code.</p></div>
+
+    <div class="step"><h4>Call the model</h4>
+      <div class="where">server/client/openai/openai.go</div>
+      <p>An OpenAI-style <code>CompletionRequest</code> (prompt, optional suffix, stop tokens, temperature, max tokens) is POSTed. Batch returns a full string; streaming yields lines.</p></div>
+
+    <div class="step"><h4>Parse &amp; sanitize</h4>
+      <div class="where">provider <code>Parse()</code> · provider/processors.go</div>
+      <p>Stop markers are stripped, repetition rejected, suffix-overlap trimmed (FIM), and oversized output is anchor-truncated and validated against the original window.</p></div>
+
+    <div class="step"><h4>Compute the diff</h4>
+      <div class="where">server/text/diff.go · <code>ComputeDiff</code></div>
+      <p>A Myers diff between the original window and the model's text yields line-level changes plus an old↔new line mapping.</p></div>
+
+    <div class="step"><h4>Split into stages</h4>
+      <div class="where">server/text/staging.go · <code>CreateStages</code></div>
+      <p>Changes are grouped by proximity and viewport into ordered <em>stages</em>, sorted nearest-cursor-first. Far-away first edits are flagged as needing a navigation jump.</p></div>
+
+    <div class="step"><h4>Render → accept/reject</h4>
+      <div class="where">server/engine/completion.go · accept.go</div>
+      <p>The stage is rendered as an inline diff. <code>Tab</code> applies it and advances to the next stage (or jumps the cursor / prefetches the next prediction); <code>Esc</code> rejects and may cache the rejection.</p></div>
+  </div>
+
+  <!-- ============ TOKENS ============ -->
+  <h2 id="tokens">2 · How the tokens are defined</h2>
+  <p>"Tokens" here means the special marker strings that delimit regions of the prompt — not model sub-word
+  tokens. There are two families: <strong>configurable FIM tokens</strong> (set per-model in Lua) and
+  <strong>hard-coded provider markers</strong> (baked into a provider's prompt format).</p>
+
+  <h3>2.1 · FIM tokens — configured per model</h3>
+  <p class="file">server/types/types.go · <b>FIMTokenConfig</b> &nbsp;↔&nbsp; lua/cursortab/config.lua · <code>fim_tokens</code></p>
+<pre><span class="c">// Go: server/types/types.go</span>
+type FIMTokenConfig struct {
+    Prefix   string <span class="c">// before the prefix content   e.g. "&lt;|fim_prefix|&gt;"</span>
+    Suffix   string <span class="c">// before the suffix content   e.g. "&lt;|fim_suffix|&gt;"</span>
+    Middle   string <span class="c">// before the completion       e.g. "&lt;|fim_middle|&gt;"</span>
+    RepoName string <span class="c">// OPTIONAL repo header token   e.g. "&lt;|repo_name|&gt;"</span>
+    FileSep  string <span class="c">// OPTIONAL file separator      e.g. "&lt;|file_sep|&gt;"</span>
+}</pre>
+
+  <table>
+    <tr><th>Field</th><th>Lua key</th><th>Required?</th><th>What it does</th></tr>
+    <tr><td><span class="tok">Prefix</span></td><td><code>prefix</code></td><td>yes (tokenized mode)</td><td>Marks the start of the text <em>before</em> the cursor.</td></tr>
+    <tr><td><span class="tok">Suffix</span></td><td><code>suffix</code></td><td>yes (tokenized mode)</td><td>Marks the start of the text <em>after</em> the cursor.</td></tr>
+    <tr><td><span class="tok">Middle</span></td><td><code>middle</code></td><td>yes (tokenized mode)</td><td>Marks where the model should generate the fill.</td></tr>
+    <tr><td><span class="tok">RepoName</span></td><td><code>repo_name</code></td><td>optional</td><td>Header before the workspace name; <em>presence enables the cross-file block</em>.</td></tr>
+    <tr><td><span class="tok">FileSep</span></td><td><code>file_sep</code></td><td>optional</td><td>Separator before each cross-file section; also added as a stop token.</td></tr>
+  </table>
+
+  <div class="note">
+    <strong>Two important switches.</strong>
+    (a) If <code>fim_tokens</code> is <em>omitted entirely</em>, the FIM provider falls back to OpenAI
+    <em>prompt+suffix</em> mode (e.g. DeepSeek) — no marker tokens at all.
+    (b) The cross-file context block is only built when <strong>both</strong> <code>repo_name</code>
+    <em>and</em> <code>file_sep</code> are set. For Qwen/zeta models these are auto-filled to
+    <span class="tok">&lt;|repo_name|&gt;</span> / <span class="tok">&lt;|file_sep|&gt;</span> if you leave them blank
+    (<span class="file" style="display:inline">config.lua</span>).
+  </div>
+
+  <h3>2.2 · Hard-coded provider markers (sweep)</h3>
+  <p class="file">server/provider/sweep/sweep.go</p>
+  <table>
+    <tr><th>Marker</th><th>Role</th></tr>
+    <tr><td><span class="mk">&lt;|file_sep|&gt;</span></td><td>Delimits every section &amp; sub-file in the prompt.</td></tr>
+    <tr><td><span class="mk">&lt;|cursor|&gt;</span></td><td>Inserted into the <code>current/</code> block to mark the exact cursor byte.</td></tr>
+    <tr><td><span class="mk">&lt;|endoftext|&gt;</span></td><td>End-of-generation stop token.</td></tr>
+    <tr><td><span class="h">original/ &nbsp; current/ &nbsp; updated/</span></td><td>The three view headers (each suffixed with <code>path:startLine:endLine</code>).</td></tr>
+  </table>
+
+  <h3>2.3 · Stop tokens by provider</h3>
+  <table>
+    <tr><th>Provider</th><th>Stop tokens</th><th>Defined at</th></tr>
+    <tr><td>FIM (tokenized)</td><td><code>[Prefix, Suffix, Middle, FileSep?]</code></td><td>fim.go:95–99</td></tr>
+    <tr><td>FIM (prompt+suffix)</td><td><code>[]</code> (none)</td><td>fim.go:74–79</td></tr>
+    <tr><td>Sweep</td><td><code>["&lt;|file_sep|&gt;", "&lt;|endoftext|&gt;"]</code></td><td>sweep.go:22</td></tr>
+    <tr><td>Zeta</td><td><code>["\n&lt;|editable_region_end|&gt;"]</code></td><td>zeta.go</td></tr>
+    <tr><td>Inline</td><td><code>["\n"]</code></td><td>inline.go</td></tr>
+  </table>
+
+  <!-- ============ FIM ASSEMBLY ============ -->
+  <h2 id="fim">3 · FIM prompt assembly — two modes</h2>
+  <p class="file">server/provider/fim/fim.go · <code>Build()</code></p>
+  <p>The provider first splits the window into <code>prefixContent</code> (everything up to the cursor) and
+  <code>suffixContent</code> (everything after). What happens next depends on whether <code>fim_tokens</code> is set.</p>
+
+  <div class="two">
+    <div>
+      <h3>Mode A — prompt + suffix <span class="tag">tokens == nil</span></h3>
+      <p class="sub">OpenAI completions style (DeepSeek &amp; co). No markers; the API gets two fields.</p>
+<pre><span class="c">// cursor in: "hello| world"</span>
+CompletionRequest{
+  Prompt: <span class="g">"hello"</span>,
+  Suffix: <span class="g">" world"</span>,
+  Stop:   <span class="g">nil</span>,
+}</pre>
+    </div>
+    <div>
+      <h3>Mode B — tokenized FIM <span class="tag">tokens != nil</span></h3>
+      <p class="sub">Markers wrap the two halves; the model continues after <span class="tok">Middle</span>.</p>
+<pre><span class="t">&lt;PRE&gt;</span>hello<span class="t">&lt;SUF&gt;</span> world<span class="t">&lt;MID&gt;</span><span class="g">▏…model fills here…</span>
+
+<span class="c">Stop: ["&lt;PRE&gt;","&lt;SUF&gt;","&lt;MID&gt;"]</span></pre>
+    </div>
+  </div>
+
+  <p>The assembled order in Mode B is literally:
+  <span class="tok">Prefix</span> → <code>prefixContent</code> → <span class="tok">Suffix</span> → <code>suffixContent</code> →
+  <span class="tok">Middle</span>. When repo tokens are configured, the <a href="#context">cross-file block</a>
+  is prepended before all of it.</p>
+
+  <!-- ============ SWEEP ASSEMBLY ============ -->
+  <h2 id="sweep">4 · Sweep prompt assembly — the 3-section format</h2>
+  <p class="file">server/provider/sweep/sweep.go · <code>Build()</code></p>
+  <p>Sweep is an <em>edit</em> (next-edit) provider, not fill-in-the-middle. It shows the model the same code
+  window three times — as it <em>was</em>, as it <em>is</em> (with a cursor marker), and an empty
+  <em>updated</em> slot to rewrite — preceded by context sections.</p>
+
+<pre><span class="m">&lt;|file_sep|&gt;</span><span class="h">main.go</span>
+<span class="c">…~300 lines of broad file context around the cursor…</span>
+
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">context/docs</span>          <span class="c">← TAB.md project doc</span>
+Use the run_py helper for python.
+
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">context/retrieval</span>  <span class="c">← recent-file chunks</span>
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">context/treesitter</span> <span class="c">← scope / siblings / imports</span>
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">context/diagnostics</span><span class="c">← LSP errors</span>
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">context/staged_diff</span><span class="c">← git diff</span>
+
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">original/</span>main.go:10:20    <span class="c">── the window, untouched</span>
+def greet(name):
+    print(name)
+
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">current/</span>main.go:10:20     <span class="c">── same window + cursor marker</span>
+def greet(name):
+    print(<span class="m">&lt;|cursor|&gt;</span>name)
+
+<span class="m">&lt;|file_sep|&gt;</span><span class="h">updated/</span>main.go:10:20     <span class="c">── model rewrites here</span>
+def greet(name):                  <span class="c">← "prefill": lines before the</span>
+    print(<span class="g">▏…model continues…</span>         <span class="c">  cursor are pre-written so the</span>
+                                  <span class="c">  model only emits the edit</span></pre>
+
+  <div class="note">
+    <strong>Prefill.</strong> The <code>updated/</code> section isn't empty — sweep pre-writes the lines up to the
+    edit point (<code>computePrefill</code>) so the model only generates the change, not the whole window. In
+    <em>insertion</em> mode (a recent insert above the cursor) only the first line + trailing blanks are
+    prefilled, giving the model freedom to re-flow shifted lines.
+  </div>
+
+  <!-- ============ CONTEXT BLOCK ============ -->
+  <h2 id="context">5 · The cross-file context block</h2>
+  <p>Both providers prepend project context. Sweep emits <code>context/*</code> sections (above); FIM builds an
+  equivalent <em>repo block</em> in <code>buildRepoContext</code> (only when <code>repo_name</code> + <code>file_sep</code>
+  are set). Same information, provider-specific framing:</p>
+
+  <table>
+    <tr><th>#</th><th>Section</th><th>FIM framing</th><th>Sweep framing</th></tr>
+    <tr><td>1</td><td>Repo header</td><td><code>&lt;|repo_name|&gt;myproject</code></td><td>— (uses broad file block)</td></tr>
+    <tr><td>2</td><td><b>TAB.md</b> project doc</td><td><code>&lt;|file_sep|&gt;TAB.md</code></td><td><code>&lt;|file_sep|&gt;context/docs</code></td></tr>
+    <tr><td>3</td><td>Recent files (retrieval)</td><td><code>&lt;|file_sep|&gt;utils.go</code></td><td><code>&lt;|file_sep|&gt;context/retrieval</code></td></tr>
+    <tr><td>4</td><td>Diagnostics</td><td><code>&lt;|file_sep|&gt;context/diagnostics</code></td><td><code>&lt;|file_sep|&gt;context/diagnostics</code></td></tr>
+    <tr><td>5</td><td>Treesitter scope</td><td><code>&lt;|file_sep|&gt;context/treesitter</code></td><td><code>&lt;|file_sep|&gt;context/treesitter</code></td></tr>
+    <tr><td>6</td><td>Diff history</td><td><code>&lt;|file_sep|&gt;name.diff</code></td><td><code>&lt;|file_sep|&gt;name.diff</code></td></tr>
+    <tr><td>7</td><td>Git staged diff</td><td><code>&lt;|file_sep|&gt;context/staged_diff</code></td><td><code>&lt;|file_sep|&gt;context/staged_diff</code></td></tr>
+    <tr><td>8</td><td>Current file header</td><td><code>&lt;|file_sep|&gt;main.go</code></td><td>(part of original/current/updated)</td></tr>
+  </table>
+
+  <p class="file">TAB.md is read by server/tabmd/tabmd.go — <code>Read(workspacePath)</code>, capped at <b>4096 bytes</b>,
+  placed early so it stays stable across edits (good for prompt caching).</p>
+
+  <!-- ============ REQUEST ============ -->
+  <h2 id="request">6 · The wire request &amp; stop tokens</h2>
+  <p class="file">server/client/openai/openai.go · <b>CompletionRequest</b></p>
+<pre>type CompletionRequest struct {
+    Model       string   <span class="c">// config.provider.model</span>
+    Prompt      string   <span class="c">// assembled in §3–§5</span>
+    Suffix      string   <span class="c">// only in FIM prompt+suffix mode</span>
+    Temperature float64
+    MaxTokens   int
+    TopK        int
+    Stop        []string <span class="c">// the provider's stop tokens (§2.3)</span>
+    N           int      <span class="c">// always 1</span>
+    Echo        bool     <span class="c">// always false</span>
+    Stream      bool     <span class="c">// true on the streaming path</span>
+}</pre>
+  <p>The provider base fills <code>Model</code>, <code>Temperature</code>, <code>MaxTokens</code>, <code>TopK</code> from
+  config (<code>provider.openai.go · Request()</code>); the provider passes <code>Prompt</code> and <code>Stop</code>.
+  On the streaming path the same request is cloned with <code>Stream:true</code> and lines are consumed as they arrive.</p>
+
+  <!-- ============ AFTER ============ -->
+  <h2 id="after">7 · After the model — diff → stages → accept</h2>
+  <p>The raw completion is just text. Turning it into reviewable edits:</p>
+  <div class="flow">
+    <div class="step"><h4>Sanitize</h4><div class="where">provider Parse()</div>
+      <p>Strip <span class="mk">&lt;|file_sep|&gt;</span>/<span class="mk">&lt;|endoftext|&gt;</span>, reject empties &amp; repetition, trim suffix overlap (FIM regenerating the tail), drop a truncated last line.</p></div>
+    <div class="step"><h4>Anchor-truncate &amp; validate</h4><div class="where">provider/processors.go</div>
+      <p>If output hit the length limit, truncate to the last line that still anchors to the original — and reject if it shrank the window too much.</p></div>
+    <div class="step"><h4>Diff</h4><div class="where">text/diff.go</div>
+      <p>Myers diff of original-window vs. completion → line changes + line mapping.</p></div>
+    <div class="step"><h4>Stage</h4><div class="where">text/staging.go</div>
+      <p>Cluster changes by proximity/viewport into ordered stages; nearest-to-cursor first; flag far first-edits for a navigation jump.</p></div>
+    <div class="step"><h4>Render</h4><div class="where">engine/completion.go</div>
+      <p>Show the current stage as an inline diff; snapshot metrics; register the stage as a rejection candidate.</p></div>
+    <div class="step"><h4>Accept / advance / reject</h4><div class="where">engine/accept.go</div>
+      <p><code>Tab</code> applies and advances to the next stage, jumps to a cursor target, or kicks a prefetch for the next prediction. <code>Esc</code> clears (and may remember the rejection for ~30s).</p></div>
+  </div>
+
+  <div class="note">
+    <strong>Why stages?</strong> A single model answer can touch several disjoint spots. Rather than apply a big
+    multi-line blob at once, cursortab walks you through the edits one cluster at a time, jumping the cursor
+    between them — so each <code>Tab</code> is a small, reviewable step.
+  </div>
+
+  <footer>
+    Generated from the cursortab.nvim source tree. Key files:
+    <code>server/provider/fim/fim.go</code>, <code>server/provider/sweep/sweep.go</code>,
+    <code>server/types/types.go</code>, <code>server/tabmd/tabmd.go</code>,
+    <code>server/client/openai/openai.go</code>, <code>server/text/*</code>, <code>server/engine/*</code>,
+    <code>lua/cursortab/config.lua</code>.
+  </footer>
+
+</div>
+</body>
+</html>
