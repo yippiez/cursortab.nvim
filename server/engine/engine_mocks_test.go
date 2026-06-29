@@ -34,6 +34,7 @@ type mockBuffer struct {
 	// Track method calls
 	syncCalls              int
 	clearUICalls           int
+	clearDiffHistoryCalls  int
 	commitPendingCalls     int
 	showCursorTargetLine   int
 	prepareCompletionCalls int
@@ -192,6 +193,12 @@ func (b *mockBuffer) CommitUserEdits() bool {
 }
 
 func (b *mockBuffer) ClearDiffHistory() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.clearDiffHistoryCalls++
+	// Re-anchor the checkpoint to the current content, mirroring NvimBuffer.
+	b.originalLines = append([]string(nil), b.lines...)
+	b.diffHistories = nil
 }
 
 func (b *mockBuffer) IsModified() bool {

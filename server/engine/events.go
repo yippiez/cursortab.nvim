@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime/debug"
+	"slices"
 	"sync/atomic"
 
 	"cursortab/logger"
@@ -25,6 +26,7 @@ const (
 	EventAccept            EventType = "accept"
 	EventPartialAccept     EventType = "partial_accept"
 	EventFileSaved         EventType = "file_saved"
+	EventFileChanged       EventType = "file_changed"
 	EventIdleTimeout       EventType = "idle_timeout"
 	EventCompletionReady   EventType = "completion_ready"
 	EventCompletionError   EventType = "completion_error"
@@ -54,7 +56,7 @@ func EventTypeFromString(s string) EventType {
 	switch EventType(s) {
 	case EventEsc, EventTextChanged, EventTextChangeTimeout, EventTrigger,
 		EventCursorMoved, EventInsertEnter, EventInsertLeave, EventAccept,
-		EventPartialAccept, EventFileSaved, EventIdleTimeout:
+		EventPartialAccept, EventFileSaved, EventFileChanged, EventIdleTimeout:
 		return EventType(s)
 	}
 	return ""
@@ -104,6 +106,7 @@ var transitions = []Transition{
 	{stateIdle, EventInsertLeave, (*Engine).startIdleTimer},
 	{stateIdle, EventEsc, (*Engine).stopIdleTimer},
 	{stateIdle, EventFileSaved, (*Engine).doFileSaved},
+	{stateIdle, EventFileChanged, (*Engine).doFileChanged},
 	{stateIdle, EventTextChanged, (*Engine).startTextChangeTimer},
 
 	// From statePendingCompletion
@@ -111,6 +114,7 @@ var transitions = []Transition{
 	{statePendingCompletion, EventEsc, (*Engine).doReject},
 	{statePendingCompletion, EventInsertLeave, (*Engine).doRejectAndStartIdleTimer},
 	{statePendingCompletion, EventFileSaved, (*Engine).doFileSaved},
+	{statePendingCompletion, EventFileChanged, (*Engine).doFileChanged},
 	{statePendingCompletion, EventCursorMoved, (*Engine).doResetIdleTimer},
 
 	// From stateHasCompletion
@@ -119,6 +123,7 @@ var transitions = []Transition{
 	{stateHasCompletion, EventEsc, (*Engine).doReject},
 	{stateHasCompletion, EventTextChanged, (*Engine).handleTextChangeImpl},
 	{stateHasCompletion, EventFileSaved, (*Engine).doFileSaved},
+	{stateHasCompletion, EventFileChanged, (*Engine).doFileChanged},
 	{stateHasCompletion, EventInsertLeave, (*Engine).doRejectAndStartIdleTimer},
 	{stateHasCompletion, EventCursorMoved, (*Engine).doResetIdleTimer},
 
@@ -127,6 +132,7 @@ var transitions = []Transition{
 	{stateHasCursorTarget, EventEsc, (*Engine).doReject},
 	{stateHasCursorTarget, EventTextChanged, (*Engine).doRejectAndDebounce},
 	{stateHasCursorTarget, EventFileSaved, (*Engine).doFileSaved},
+	{stateHasCursorTarget, EventFileChanged, (*Engine).doFileChanged},
 	{stateHasCursorTarget, EventInsertLeave, (*Engine).doRejectAndStartIdleTimer},
 	{stateHasCursorTarget, EventCursorMoved, (*Engine).doResetIdleTimer},
 
@@ -136,6 +142,7 @@ var transitions = []Transition{
 	{stateStreamingCompletion, EventPartialAccept, (*Engine).doPartialAcceptStreaming},
 	{stateStreamingCompletion, EventTextChanged, (*Engine).doRejectStreamingAndDebounce},
 	{stateStreamingCompletion, EventFileSaved, (*Engine).doFileSaved},
+	{stateStreamingCompletion, EventFileChanged, (*Engine).doFileChanged},
 	{stateStreamingCompletion, EventInsertLeave, (*Engine).doRejectStreamingAndStartIdleTimer},
 	{stateStreamingCompletion, EventCursorMoved, (*Engine).doResetIdleTimer},
 }
@@ -369,6 +376,26 @@ func (e *Engine) doResetIdleTimer() {
 func (e *Engine) doFileSaved() {
 	e.syncBuffer()
 	e.buffer.ClearDiffHistory()
+	e.saveCurrentFileState()
+}
+
+// doFileChanged re-baselines per-file state after the file was modified on disk
+// underneath the editor (e.g. branch switch, formatter, autoread reload).
+//
+// The reloaded buffer keeps the same buffer id, so Sync reports no file switch
+// and the stale baselines (originalLines, diskLines, diffHistories, and the
+// engine's lastBufferLines) survive. Left untouched, the next CommitUserEdits or
+// text-change classification diffs the old baseline against the reloaded content
+// and emits a large bogus edit that poisons the model's context, producing
+// nonsensical completions (often spurious deletions rendered as red ghost text).
+//
+// Treat the reload as a fresh starting point: drop any stale completion, pull the
+// reloaded content, and reset every baseline to it.
+func (e *Engine) doFileChanged() {
+	e.reject()
+	e.syncBuffer()
+	e.buffer.ClearDiffHistory()
+	e.lastBufferLines = slices.Clone(e.buffer.Lines())
 	e.saveCurrentFileState()
 }
 

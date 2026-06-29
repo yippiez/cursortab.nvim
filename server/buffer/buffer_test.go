@@ -69,6 +69,34 @@ func TestCommitUserEdits_UpdatesPreviousLines(t *testing.T) {
 	assert.Equal(t, "old content", buf.previousLines[0], "previousLines set to old checkpoint")
 }
 
+// TestClearDiffHistory_RebaselinesAfterExternalChange verifies that when a file
+// is reloaded with new content underneath the editor, re-anchoring the baseline
+// (as the engine does on an external file change) prevents the reload from being
+// committed as a bogus user edit.
+func TestClearDiffHistory_RebaselinesAfterExternalChange(t *testing.T) {
+	buf := New(Config{NsID: 1})
+	// Baseline from before the external change.
+	buf.lines = []string{"line 1", "line 2"}
+	buf.originalLines = []string{"line 1", "line 2"}
+	buf.diskLines = []string{"line 1", "line 2"}
+
+	// Without re-baselining, the reloaded content diffs against the stale
+	// checkpoint and CommitUserEdits records the whole external change.
+	buf.lines = []string{"externally", "rewritten", "content"}
+	if !buf.CommitUserEdits() {
+		t.Fatal("precondition: stale baseline should surface the external change as an edit")
+	}
+
+	// Re-anchor the baseline to the reloaded content (engine's file-changed path).
+	buf.diffHistories = nil
+	buf.ClearDiffHistory()
+
+	assert.Equal(t, buf.lines, buf.originalLines, "checkpoint re-anchored to reloaded content")
+	assert.Equal(t, buf.lines, buf.diskLines, "disk baseline re-anchored to reloaded content")
+	assert.False(t, buf.IsModified(), "buffer matches its re-anchored disk baseline")
+	assert.False(t, buf.CommitUserEdits(), "no bogus edit recorded after re-baseline")
+}
+
 // --- HasChanges Tests ---
 
 func TestHasChanges_NoChanges(t *testing.T) {

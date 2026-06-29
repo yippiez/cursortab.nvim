@@ -318,6 +318,21 @@ local function setup_autocommands()
 		end,
 	})
 
+	-- File changed on disk underneath nvim (branch switch, formatter, autoread
+	-- reload). The buffer is reloaded with new content, so any shown completion
+	-- is stale and the daemon's diff baseline must be re-anchored to the reload.
+	vim.api.nvim_create_autocmd({ "FileChangedShellPost" }, {
+		callback = function()
+			if buffer.should_skip() then
+				return
+			end
+			if ui.has_cursor_prediction() or ui.has_completion() then
+				ui.ensure_close_all()
+			end
+			daemon.send_event("file_changed")
+		end,
+	})
+
 	-- Set up autocommand to close completions/predictions on certain events
 	vim.api.nvim_create_autocmd({ "ModeChanged", "CmdlineEnter", "CmdwinEnter", "BufEnter" }, {
 		callback = function(args)
