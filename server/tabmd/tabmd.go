@@ -3,9 +3,9 @@
 // (custom CLIs, helper functions, naming rules) that aren't visible in nearby
 // files.
 //
-// The reader is wired into the sweep prompt builder (as a context/docs
-// section) and the fim repo-level block (as a TAB.md pseudo-file). See
-// doc/tab-md.md.
+// It is collected as a context material (ctx.TabMd) and injected by the sweep
+// prompt builder (as a context/docs section) and the fim repo-level block (as
+// a TAB.md pseudo-file).
 package tabmd
 
 import (

@@ -32,6 +32,7 @@ func NewProvider(config *types.ProviderConfig) *Provider {
 		materials = append(materials,
 			sourcectx.Diagnostics{}, sourcectx.GitDiff{},
 			sourcectx.RecentFiles{}, sourcectx.EditHistory{},
+			sourcectx.TabMd{},
 		)
 	}
 
@@ -121,11 +122,11 @@ func buildRepoContext(b *strings.Builder, p *Provider, ctx *provider.RequestStat
 
 	// Project doc (TAB.md) - static project conventions. Placed early in the
 	// repo block so it stays stable across edits.
-	if doc := tabmd.Read(current.WorkspacePath); doc != "" {
+	if doc, ok := sourcectx.Find[sourcectx.TabMd](input.Materials); ok && doc.Doc != "" {
 		b.WriteString(fileSep)
 		b.WriteString(tabmd.DocName)
 		b.WriteString("\n")
-		b.WriteString(doc)
+		b.WriteString(doc.Doc)
 		b.WriteString("\n")
 	}
 

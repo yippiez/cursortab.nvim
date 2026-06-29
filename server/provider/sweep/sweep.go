@@ -11,7 +11,6 @@ import (
 	sourcectx "cursortab/ctx"
 	"cursortab/engine"
 	"cursortab/provider"
-	"cursortab/tabmd"
 	"cursortab/types"
 )
 
@@ -38,6 +37,7 @@ func NewProvider(config *types.ProviderConfig) *Provider {
 		Base: provider.NewBase(engine.CompletionEdit, sourcectx.Materials{
 			sourcectx.Diagnostics{}, sourcectx.Treesitter{}, sourcectx.GitDiff{},
 			sourcectx.RecentFiles{}, sourcectx.EditHistory{}, sourcectx.UserActions{},
+			sourcectx.TabMd{},
 		}, provider.SyntheticPrefetchEnabled),
 		OpenAI: provider.NewOpenAI(providerName, config),
 	}
@@ -86,8 +86,10 @@ func (p *Provider) Build(ctx *provider.RequestState) (*openai.CompletionRequest,
 	// Project doc context (TAB.md) - static project conventions the model
 	// can't learn from nearby files. Placed before the cross-file context so
 	// it stays stable across edits.
-	if section := formatDocsSection(tabmd.Read(current.WorkspacePath)); section != "" {
-		promptBuilder.WriteString(section)
+	if doc, ok := sourcectx.Find[sourcectx.TabMd](input.Materials); ok {
+		if section := formatDocsSection(doc.Doc); section != "" {
+			promptBuilder.WriteString(section)
+		}
 	}
 
 	// Cross-file context (retrieval chunks from recent files)

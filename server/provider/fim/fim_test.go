@@ -6,8 +6,6 @@ import (
 	sourcectx "cursortab/ctx"
 	"cursortab/provider"
 	"cursortab/types"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -221,11 +219,6 @@ func TestBuildPrompt_RepoContext(t *testing.T) {
 }
 
 func TestBuildPrompt_RepoContextWithTabMD(t *testing.T) {
-	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "TAB.md"), []byte("Use the run_py helper for python."), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	config := &types.ProviderConfig{
 		ProviderModel: "test-model",
 		FIMTokens: &types.FIMTokenConfig{
@@ -239,8 +232,10 @@ func TestBuildPrompt_RepoContextWithTabMD(t *testing.T) {
 	p := NewProvider(config)
 
 	input := completionInput([]string{"hello world"}, 1, 5)
-	input.Current.WorkspacePath = workspace
 	input.Current.File.Path = "main.go"
+	input.Materials = sourcectx.Materials{
+		sourcectx.TabMd{Doc: "Use the run_py helper for python."},
+	}
 	ctx := stateForInput(input)
 
 	req := buildPromptForTest(p, ctx)
@@ -263,8 +258,10 @@ func TestBuildPrompt_NoTabMDWhenAbsent(t *testing.T) {
 	p := NewProvider(config)
 
 	input := completionInput([]string{"hello world"}, 1, 5)
-	input.Current.WorkspacePath = t.TempDir() // no TAB.md present
 	input.Current.File.Path = "main.go"
+	input.Materials = sourcectx.Materials{
+		sourcectx.TabMd{Doc: ""}, // collected but empty (no TAB.md on disk)
+	}
 	ctx := stateForInput(input)
 
 	req := buildPromptForTest(p, ctx)

@@ -6,8 +6,6 @@ import (
 	sourcectx "cursortab/ctx"
 	"cursortab/provider"
 	"cursortab/types"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -108,16 +106,12 @@ func TestBuildPrompt_WithDiffHistory(t *testing.T) {
 }
 
 func TestBuildPrompt_WithTabMD(t *testing.T) {
-	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "TAB.md"), []byte("Use the run_py helper for python."), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	config := &types.ProviderConfig{ProviderModel: "test-model"}
 	p := NewProvider(config)
 
-	input := completionInput("main.go", []string{"line 1"}, 1, 0)
-	input.Current.WorkspacePath = workspace
+	input := completionInput("main.go", []string{"line 1"}, 1, 0, sourcectx.Materials{
+		sourcectx.TabMd{Doc: "Use the run_py helper for python."},
+	})
 	ctx := stateForInput(input, config)
 
 	req := buildPromptForTest(p, ctx)
@@ -130,13 +124,14 @@ func TestBuildPrompt_WithoutTabMD(t *testing.T) {
 	config := &types.ProviderConfig{ProviderModel: "test-model"}
 	p := NewProvider(config)
 
-	input := completionInput("main.go", []string{"line 1"}, 1, 0)
-	input.Current.WorkspacePath = t.TempDir() // no TAB.md present
+	input := completionInput("main.go", []string{"line 1"}, 1, 0, sourcectx.Materials{
+		sourcectx.TabMd{Doc: ""}, // collected but empty (no TAB.md on disk)
+	})
 	ctx := stateForInput(input, config)
 
 	req := buildPromptForTest(p, ctx)
 
-	assert.True(t, !strings.Contains(req.Prompt, "context/docs"), "should omit docs section when no TAB.md")
+	assert.False(t, strings.Contains(req.Prompt, "context/docs"), "should omit docs section when no TAB.md")
 }
 
 func TestParseCompletion_NoChange(t *testing.T) {
