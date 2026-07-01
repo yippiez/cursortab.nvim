@@ -392,6 +392,14 @@ require("cursortab").setup({
 llama-server -hf sweepai/sweep-next-edit-1.5b --port 8000
 ```
 
+Or use the bundled launcher, which enables KV-cache prefix reuse so repeated
+completion requests skip most prompt processing:
+
+```bash
+./scripts/run-sweep-server.sh          # 1.5b on :8000
+./scripts/run-sweep-server.sh 0.5b     # smaller/faster model
+```
+
 </details>
 
 #### Zeta-2 Provider

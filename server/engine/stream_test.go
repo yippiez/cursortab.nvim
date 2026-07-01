@@ -58,6 +58,99 @@ func TestStreamingReject_NoKeepPartial(t *testing.T) {
 	assert.Equal(t, stateIdle, eng.state, "state after rejecting line streaming")
 }
 
+// newStreamingStateForTest mirrors startCompletionStream's stage builder
+// setup for a stream rewriting the given window.
+func newStreamingStateForTest(eng *Engine, oldLines []string) *streamingState {
+	viewportTop, viewportBottom := eng.buffer.ViewportBounds()
+	return &streamingState{
+		StageBuilder: text.NewIncrementalStageBuilder(
+			oldLines,
+			1,
+			eng.config.CursorPrediction.ProximityThreshold,
+			eng.config.MaxVisibleLines,
+			viewportTop,
+			viewportBottom,
+			eng.buffer.Row(),
+			eng.buffer.Col(),
+			eng.buffer.Path(),
+			eng.buffer.AvailableWidth(),
+		),
+	}
+}
+
+// A stream that dies early (unavailable server, empty response, truncation)
+// delivers only a prefix of the window. The stage builder would diff that
+// prefix against the full window and stage the missing tail as a deletion.
+// The provider's parse verdict (nil Completion) must gate those stages.
+func TestStreamComplete_ProviderRejectionDiscardsStagedStream(t *testing.T) {
+	buf := newMockBuffer()
+	buf.lines = []string{"func a() {", "\tbody1", "\tbody2", "}"}
+	prov := newMockProvider()
+	clock := newMockClock()
+	eng := createTestEngine(buf, prov, clock)
+
+	eng.state = stateStreamingCompletion
+	ss := newStreamingStateForTest(eng, buf.lines)
+	// Only the first window line arrived before the stream ended.
+	ss.StageBuilder.AddLine("func a() {")
+	eng.streamingState = ss
+	stream := newMockCompletionStream(nil)
+	stream.response = &types.CompletionResponse{} // provider rejected the stream
+	eng.completionStream = stream
+
+	eng.handleStreamCompleteSimple()
+
+	assert.Nil(t, eng.stagedCompletion, "rejected stream must not stage a completion")
+	assert.Equal(t, stateIdle, eng.state, "state after rejected stream")
+	assert.False(t, eng.display.hasCompletion(), "no completion should be displayed")
+}
+
+func TestStreamComplete_ProviderRejectionAfterRenderedStageClearsUI(t *testing.T) {
+	buf := newMockBuffer()
+	buf.lines = []string{"func a() {", "\tbody1", "\tbody2", "}"}
+	prov := newMockProvider()
+	clock := newMockClock()
+	eng := createTestEngine(buf, prov, clock)
+
+	eng.state = stateStreamingCompletion
+	ss := newStreamingStateForTest(eng, buf.lines)
+	ss.StageBuilder.AddLine("func a() {")
+	ss.FirstStageRendered = true
+	eng.streamingState = ss
+	stream := newMockCompletionStream(nil)
+	stream.response = &types.CompletionResponse{}
+	eng.completionStream = stream
+
+	eng.handleStreamCompleteSimple()
+
+	assert.Nil(t, eng.stagedCompletion, "rejected stream must not stage a completion")
+	assert.Equal(t, stateIdle, eng.state, "state after rejected stream")
+}
+
+func TestStreamComplete_ProviderRejectionStillHonorsCursorTarget(t *testing.T) {
+	buf := newMockBuffer()
+	buf.lines = []string{"func a() {", "\tbody1", "\tbody2", "}"}
+	prov := newMockProvider()
+	clock := newMockClock()
+	eng := createTestEngine(buf, prov, clock)
+
+	eng.state = stateStreamingCompletion
+	ss := newStreamingStateForTest(eng, buf.lines)
+	ss.StageBuilder.AddLine("func a() {")
+	eng.streamingState = ss
+	stream := newMockCompletionStream(nil)
+	stream.response = &types.CompletionResponse{
+		CursorTarget: &types.CursorPredictionTarget{LineNumber: 10},
+	}
+	eng.completionStream = stream
+
+	eng.handleStreamCompleteSimple()
+
+	assert.Nil(t, eng.stagedCompletion, "no stages without a completion")
+	assert.Equal(t, stateHasCursorTarget, eng.state, "cursor target from the parse verdict is shown")
+	assert.Equal(t, 10, buf.showCursorTargetLine, "cursor target line")
+}
+
 func TestStreamCompleteAfterAccept_UsesCursorTargetOnlyResponse(t *testing.T) {
 	buf := newMockBuffer()
 	buf.lines = []string{"line 1", "line 2"}

@@ -292,9 +292,3 @@ func FormatDiagnosticsText(diag *types.Diagnostics) string {
 	}
 	return b.String()
 }
-
-func isNoOpReplacement(newLines, oldLines []string) bool {
-	newText := strings.TrimRight(strings.Join(newLines, "\n"), " \t\n\r")
-	oldText := strings.TrimRight(strings.Join(oldLines, "\n"), " \t\n\r")
-	return newText == oldText
-}

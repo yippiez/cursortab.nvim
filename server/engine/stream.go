@@ -133,6 +133,25 @@ func (e *Engine) handleStreamCompleteSimple() {
 	}
 	e.cancelCurrentRequest()
 
+	// The provider's parse verdict gates the streamed stages. A nil Completion
+	// means the provider rejected the accumulated text (empty response,
+	// truncation, or anchor mismatch); Finalize would diff the full window
+	// against the partial stream and stage the missing tail as a deletion.
+	if streamResponse == nil || streamResponse.Completion == nil {
+		e.streamingState = nil
+		e.completionStream = nil
+		if firstStageRendered {
+			e.reject()
+			return
+		}
+		e.state = stateIdle
+		if streamResponse != nil && streamResponse.CursorTarget != nil {
+			e.cursorTarget = streamResponse.CursorTarget
+			e.handleCursorTarget()
+		}
+		return
+	}
+
 	stagingResult := ss.StageBuilder.Finalize()
 	if streamResponse != nil && streamResponse.CursorTarget != nil && stagingResult != nil && len(stagingResult.Stages) > 0 {
 		stagingResult.Stages[len(stagingResult.Stages)-1].CursorTarget = streamResponse.CursorTarget
