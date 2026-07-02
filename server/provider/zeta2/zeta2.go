@@ -67,7 +67,7 @@ func (p *Provider) Complete(ctx context.Context, input sourcectx.CompletionInput
 	return provider.StartBatch(ctx, input, p.ProviderConfig(), p)
 }
 
-func (p *Provider) StreamCompletion(ctx context.Context, input sourcectx.CompletionInput) (engine.CompletionStream, error) {
+func (p *Provider) StreamCompletion(ctx context.Context, input sourcectx.CompletionInput) (engine.CompletionStream, engine.Window, error) {
 	return p.OpenAI.StartStream(ctx, input, p.ProviderConfig(), p)
 }
 
@@ -162,16 +162,16 @@ func assemblePrompt(p *Provider, ctx *provider.RequestState) string {
 	return b.String()
 }
 
-func streamWindow(ctx *provider.RequestState) (int, []string) {
+func streamWindow(ctx *provider.RequestState) engine.Window {
 	if len(ctx.Window.Lines) == 0 {
-		return 0, nil
+		return engine.Window{}
 	}
 	editableStart, editableEnd := computeEditableRange(ctx.Window.Lines, ctx.Window.CursorLine, ctx.Window.Start, treesitterRanges(ctx.Input.Materials))
 	oldLines := ctx.Window.Lines[editableStart:editableEnd]
 	for len(oldLines) > 0 && strings.TrimSpace(oldLines[len(oldLines)-1]) == "" {
 		oldLines = oldLines[:len(oldLines)-1]
 	}
-	return ctx.Window.Start + editableStart, oldLines
+	return engine.Window{Start: ctx.Window.Start + editableStart, OldLines: oldLines}
 }
 
 // computeEditableRange returns [start, end) line indices within trimmed lines
@@ -440,10 +440,8 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 }
 
 func (p *Provider) StreamArgs(state *provider.RequestState) provider.OpenAIStreamArgs {
-	windowStart, oldLines := streamWindow(state)
 	return provider.OpenAIStreamArgs{
-		WindowStart:   windowStart,
-		OldLines:      oldLines,
+		Window:        streamWindow(state),
 		LineTransform: visibleStreamLine,
 	}
 }

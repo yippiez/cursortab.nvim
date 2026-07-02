@@ -40,7 +40,7 @@ func (p *Provider) Complete(ctx context.Context, input sourcectx.CompletionInput
 	return provider.StartBatch(ctx, input, p.ProviderConfig(), p)
 }
 
-func (p *Provider) StreamCompletion(ctx context.Context, input sourcectx.CompletionInput) (engine.CompletionStream, error) {
+func (p *Provider) StreamCompletion(ctx context.Context, input sourcectx.CompletionInput) (engine.CompletionStream, engine.Window, error) {
 	return p.OpenAI.StartStream(ctx, input, p.ProviderConfig(), p)
 }
 
@@ -286,7 +286,7 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 	if resp, done := provider.ValidateAnchorPositionText(providerName, ctx, text, 0.25); done {
 		return resp, nil
 	}
-	text, endLineInc, resp, done := provider.AnchorTruncationText(providerName, ctx, text, result.FinishReason, result.StoppedEarly, 0.75)
+	text, endLineInc, resp, done := provider.AnchorTruncationText(providerName, ctx, text, result.Truncated, 0.75)
 	if done {
 		return resp, nil
 	}
@@ -294,20 +294,18 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 }
 
 func (p *Provider) StreamArgs(state *provider.RequestState) provider.OpenAIStreamArgs {
-	windowStart, oldLines := defaultStreamWindow(state)
 	return provider.OpenAIStreamArgs{
-		WindowStart:        windowStart,
-		OldLines:           oldLines,
-		FirstLineValidator: provider.FirstLineAnchorChecker(0.25),
+		Window:             defaultStreamWindow(state),
+		FirstLineValidator: provider.FirstLineAnchorChecker(state, 0.25),
 	}
 }
 
-func defaultStreamWindow(state *provider.RequestState) (int, []string) {
+func defaultStreamWindow(state *provider.RequestState) engine.Window {
 	oldLines := state.Window.Lines
 	if len(oldLines) == 0 {
 		oldLines = state.Input.Current.File.Lines
 	}
-	return state.Window.Start, oldLines
+	return engine.Window{Start: state.Window.Start, OldLines: oldLines}
 }
 
 func parseCompletion(ctx *provider.RequestState, completionText string, endLineInc int) *types.CompletionResponse {

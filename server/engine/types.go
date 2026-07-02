@@ -61,7 +61,15 @@ type Provider interface {
 }
 
 type StreamingProvider interface {
-	StreamCompletion(ctx context.Context, input ctx.CompletionInput) (CompletionStream, error)
+	StreamCompletion(ctx context.Context, input ctx.CompletionInput) (CompletionStream, Window, error)
+}
+
+// Window is the buffer region a completion stream rewrites. The engine seeds
+// incremental staging with it: streamed lines are diffed against OldLines
+// starting at Start (0-indexed).
+type Window struct {
+	Start    int
+	OldLines []string
 }
 
 // CompletionKind describes the editing shape a provider can produce.
@@ -92,7 +100,6 @@ const (
 // behind [CompletionStream.Finish]; engine owns only UI lifecycle.
 type CompletionStream interface {
 	Lines() <-chan string
-	Window() (windowStart int, oldLines []string)
 	Cancel()
 	Finish() (*types.CompletionResponse, error)
 }

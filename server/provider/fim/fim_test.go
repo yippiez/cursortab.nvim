@@ -164,8 +164,8 @@ func TestParseCompletion_DropsTruncatedLastLine(t *testing.T) {
 	ctx := stateForLines([]string{"hello world"}, 1, 5, &types.ProviderConfig{ProviderModel: "test-model"})
 
 	resp := parseCompletion(p, ctx, &openai.CompletionResult{
-		Text:         " there\nincomplete",
-		FinishReason: "length",
+		Text:      " there\nincomplete",
+		Truncated: true,
 	})
 	assert.NotNil(t, resp, "response should not be nil")
 	assert.NotNil(t, resp.Completion, "completions count")

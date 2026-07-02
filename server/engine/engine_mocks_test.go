@@ -400,8 +400,11 @@ func (p *mockProvider) Complete(_ context.Context, input ctx.CompletionInput) (*
 type mockStreamingProvider struct {
 	*mockProvider
 	stream    CompletionStream
+	window    Window
 	streamErr error
 }
+
+var _ StreamingProvider = (*mockStreamingProvider)(nil)
 
 func newMockStreamingProvider(stream CompletionStream) *mockStreamingProvider {
 	return &mockStreamingProvider{
@@ -410,21 +413,21 @@ func newMockStreamingProvider(stream CompletionStream) *mockStreamingProvider {
 	}
 }
 
-func (p *mockStreamingProvider) StreamCompletion(_ context.Context, _ ctx.CompletionInput) (CompletionStream, error) {
+func (p *mockStreamingProvider) StreamCompletion(_ context.Context, _ ctx.CompletionInput) (CompletionStream, Window, error) {
 	if p.streamErr != nil {
-		return nil, p.streamErr
+		return nil, Window{}, p.streamErr
 	}
-	return p.stream, nil
+	return p.stream, p.window, nil
 }
 
 type mockCompletionStream struct {
-	lines       chan string
-	cancel      context.CancelFunc
-	windowStart int
-	oldLines    []string
-	response    *types.CompletionResponse
-	err         error
+	lines    chan string
+	cancel   context.CancelFunc
+	response *types.CompletionResponse
+	err      error
 }
+
+var _ CompletionStream = (*mockCompletionStream)(nil)
 
 func newMockCompletionStream(cancel context.CancelFunc) *mockCompletionStream {
 	return &mockCompletionStream{lines: make(chan string), cancel: cancel}
@@ -432,10 +435,6 @@ func newMockCompletionStream(cancel context.CancelFunc) *mockCompletionStream {
 
 func (s *mockCompletionStream) Lines() <-chan string {
 	return s.lines
-}
-
-func (s *mockCompletionStream) Window() (int, []string) {
-	return s.windowStart, s.oldLines
 }
 
 func (s *mockCompletionStream) Cancel() {

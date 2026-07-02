@@ -53,22 +53,22 @@ func (e *Engine) prepareCompletionInput(parent context.Context, opts completionI
 	return collected, true, nil
 }
 
-func (e *Engine) startProviderCompletion(reqCtx context.Context, input ctx.CompletionInput) (*types.CompletionResponse, CompletionStream, error) {
+func (e *Engine) startProviderCompletion(reqCtx context.Context, input ctx.CompletionInput) (*types.CompletionResponse, CompletionStream, Window, error) {
 	if streamingProvider, ok := e.provider.(StreamingProvider); ok {
-		stream, err := streamingProvider.StreamCompletion(reqCtx, input)
+		stream, window, err := streamingProvider.StreamCompletion(reqCtx, input)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, Window{}, err
 		}
 		if stream != nil {
-			return nil, stream, nil
+			return nil, stream, window, nil
 		}
 	}
 
 	result, err := e.provider.Complete(reqCtx, input)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, Window{}, err
 	}
-	return result, nil, nil
+	return result, nil, Window{}, nil
 }
 
 func (e *Engine) suppressCompletionRequest(source types.CompletionSource, manual bool) string {
@@ -146,7 +146,7 @@ func (e *Engine) requestCompletion(source types.CompletionSource, manual bool) {
 	reqCtx, cancel := context.WithTimeout(e.mainCtx, e.config.CompletionTimeout)
 	e.currentCancel = cancel
 	go func() {
-		result, stream, err := e.startProviderCompletion(reqCtx, input)
+		result, stream, window, err := e.startProviderCompletion(reqCtx, input)
 		if err != nil {
 			cancel()
 			select {
@@ -157,7 +157,7 @@ func (e *Engine) requestCompletion(source types.CompletionSource, manual bool) {
 		}
 		if stream != nil {
 			select {
-			case e.eventChan <- Event{Type: EventCompletionReady, RequestID: requestID, Manual: manual, Stream: stream}:
+			case e.eventChan <- Event{Type: EventCompletionReady, RequestID: requestID, Manual: manual, Stream: stream, Window: window}:
 			case <-e.mainCtx.Done():
 				cancel()
 			}

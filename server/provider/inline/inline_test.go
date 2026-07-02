@@ -136,8 +136,8 @@ func TestParseCompletion_RejectsTruncatedResult(t *testing.T) {
 	ctx := stateForLines([]string{"abc"}, 1, 3, &types.ProviderConfig{ProviderModel: "test-model"})
 
 	resp := parseCompletion(p, ctx, &openai.CompletionResult{
-		Text:         "def",
-		FinishReason: "length",
+		Text:      "def",
+		Truncated: true,
 	})
 	assert.Nil(t, resp.Completion, "truncated result should not produce completion")
 }
