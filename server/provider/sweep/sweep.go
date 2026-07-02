@@ -37,6 +37,7 @@ func NewProvider(config *types.ProviderConfig) *Provider {
 		Base: provider.NewBase(engine.CompletionEdit, sourcectx.Materials{
 			sourcectx.Diagnostics{}, sourcectx.Treesitter{}, sourcectx.GitDiff{},
 			sourcectx.RecentFiles{}, sourcectx.EditHistory{}, sourcectx.UserActions{},
+			sourcectx.TabMd{},
 		}, provider.SyntheticPrefetchEnabled),
 		OpenAI: provider.NewOpenAI(providerName, config),
 	}
@@ -80,6 +81,15 @@ func (p *Provider) Build(ctx *provider.RequestState) (*openai.CompletionRequest,
 		promptBuilder.WriteString("\n")
 		promptBuilder.WriteString(initialFile)
 		promptBuilder.WriteString("\n")
+	}
+
+	// Project doc context (TAB.md) - static project conventions the model
+	// can't learn from nearby files. Placed before the cross-file context so
+	// it stays stable across edits.
+	if doc, ok := sourcectx.Find[sourcectx.TabMd](input.Materials); ok {
+		if section := formatDocsSection(doc.Doc); section != "" {
+			promptBuilder.WriteString(section)
+		}
 	}
 
 	// Cross-file context (retrieval chunks from recent files)
@@ -300,6 +310,13 @@ func getBroadFileContext(current sourcectx.CurrentSnapshot) string {
 	}
 
 	return strings.Join(lines[contextStart:contextEnd], "\n")
+}
+
+func formatDocsSection(doc string) string {
+	if doc == "" {
+		return ""
+	}
+	return "<|file_sep|>context/docs\n" + doc + "\n"
 }
 
 func formatTreesitterSection(ts *types.TreesitterContext) string {

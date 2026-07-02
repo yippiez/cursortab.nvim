@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"cursortab/buffer"
+	"cursortab/tabmd"
 	"cursortab/types"
 	"cursortab/utils"
 )
@@ -59,6 +60,14 @@ func (GitDiff) collect(ctx context.Context, input ContextSourceInput) (material,
 	}
 	result.Data = &types.GitDiffContext{Diff: strings.Join(symbols, "\n")}
 	return result, nil
+}
+
+type TabMd struct {
+	Doc string
+}
+
+func (TabMd) collect(_ context.Context, input ContextSourceInput) (material, error) {
+	return TabMd{Doc: tabmd.Read(input.Current.WorkspacePath)}, nil
 }
 
 type RecentFiles struct {
