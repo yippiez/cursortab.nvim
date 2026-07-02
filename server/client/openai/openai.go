@@ -62,11 +62,13 @@ type StreamChunk struct {
 	} `json:"choices"`
 }
 
-// CompletionResult is the raw text result shared by batch and streaming calls.
+// CompletionResult is the raw text result shared by batch and streaming
+// calls. Truncated reports whether the output was cut short before the model
+// finished (server-side token limit, client-side line limit, or
+// cancellation) — the wire-format finish reasons reduce to this one fact.
 type CompletionResult struct {
-	Text         string
-	FinishReason string
-	StoppedEarly bool
+	Text      string
+	Truncated bool
 }
 
 // DefaultCompletionPath is the default API endpoint path
@@ -119,20 +121,20 @@ func (c *Client) DoCompletion(ctx context.Context, req *CompletionRequest) (*Com
 
 // StreamCompletion sends a streaming completion request and invokes emit for
 // each text chunk as it arrives. It blocks until the stream ends, emit
-// returns false, or ctx is cancelled, and returns the finish reason reported
-// by the server.
-func (c *Client) StreamCompletion(ctx context.Context, req *CompletionRequest, emit func(text string) bool) (string, error) {
+// returns false, or ctx is cancelled, and reports whether the server
+// truncated the output (finish reason "length").
+func (c *Client) StreamCompletion(ctx context.Context, req *CompletionRequest, emit func(text string) bool) (bool, error) {
 	defer logger.Trace("openai.StreamCompletion")()
 	req = completionRequestWithStream(req, true)
 
 	body, err := encodeRequest(req)
 	if err != nil {
-		return "", fmt.Errorf("marshal stream request: %w", err)
+		return false, fmt.Errorf("marshal stream request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.URL+c.CompletionPath, body)
 	if err != nil {
-		return "", fmt.Errorf("create stream request: %w", err)
+		return false, fmt.Errorf("create stream request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
@@ -142,26 +144,27 @@ func (c *Client) StreamCompletion(ctx context.Context, req *CompletionRequest, e
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("send stream request: %w", err)
+		return false, fmt.Errorf("send stream request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("stream request failed with status %d: %s", resp.StatusCode, string(respBody))
+		return false, fmt.Errorf("stream request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return decodeSSE(ctx, resp.Body, emit)
 }
 
-// decodeSSE reads SSE events from body and emits each chunk's text.
-func decodeSSE(ctx context.Context, body io.Reader, emit func(string) bool) (string, error) {
-	var finishReason string
+// decodeSSE reads SSE events from body and emits each chunk's text. It
+// reports whether the server finished with reason "length" (truncated).
+func decodeSSE(ctx context.Context, body io.Reader, emit func(string) bool) (bool, error) {
+	truncated := false
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
-			return finishReason, nil
+			return truncated, nil
 		}
 
 		line := scanner.Text()
@@ -184,24 +187,24 @@ func decodeSSE(ctx context.Context, body io.Reader, emit func(string) bool) (str
 		jsonData := strings.TrimPrefix(line, "data: ")
 		var chunk StreamChunk
 		if err := json.Unmarshal([]byte(jsonData), &chunk); err != nil {
-			return finishReason, fmt.Errorf("parse stream chunk: %w", err)
+			return truncated, fmt.Errorf("parse stream chunk: %w", err)
 		}
 
 		if len(chunk.Choices) == 0 {
 			continue
 		}
-		if chunk.Choices[0].FinishReason != "" {
-			finishReason = chunk.Choices[0].FinishReason
+		if chunk.Choices[0].FinishReason == "length" {
+			truncated = true
 		}
 		if !emit(chunk.Choices[0].Text) {
-			return finishReason, nil
+			return truncated, nil
 		}
 	}
 
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		return finishReason, fmt.Errorf("read stream: %w", err)
+		return truncated, fmt.Errorf("read stream: %w", err)
 	}
-	return finishReason, nil
+	return truncated, nil
 }
 
 func completionRequestWithStream(req *CompletionRequest, stream bool) *CompletionRequest {

@@ -10,16 +10,15 @@ import (
 	"cursortab/types"
 )
 
-// chunkSource emits the given chunks in order and reports the given finish
-// reason at the natural end of the stream.
-func chunkSource(finishReason string, chunks ...string) Source {
-	return func(ctx context.Context, emit func(string) bool) (string, error) {
+// chunkSource emits the given chunks in order and ends the stream naturally.
+func chunkSource(chunks ...string) Source {
+	return func(ctx context.Context, emit func(string) bool) (bool, error) {
 		for _, c := range chunks {
 			if !emit(c) {
-				return "", nil
+				return false, nil
 			}
 		}
-		return finishReason, nil
+		return false, nil
 	}
 }
 
@@ -46,20 +45,19 @@ func drain(s *Stream) []string {
 
 func TestStream_AssemblesLinesAcrossChunks(t *testing.T) {
 	s, result := start(t, Config{
-		Source: chunkSource("stop", "hel", "lo\nwor", "ld\n"),
+		Source: chunkSource("hel", "lo\nwor", "ld\n"),
 	})
 
 	assert.Equal(t, []string{"hello", "world"}, drain(s), "lines")
 	_, err := s.Finish()
 	assert.NoError(t, err, "finish")
 	assert.Equal(t, "hello\nworld\n", result.Text, "accumulated text")
-	assert.Equal(t, "stop", result.FinishReason, "finish reason")
-	assert.False(t, result.StoppedEarly, "stopped early")
+	assert.False(t, result.Truncated, "truncated")
 }
 
 func TestStream_FlushesTrailingPartialLine(t *testing.T) {
 	s, result := start(t, Config{
-		Source: chunkSource("stop", "one\ntwo"),
+		Source: chunkSource("one\ntwo"),
 	})
 
 	assert.Equal(t, []string{"one", "two"}, drain(s), "lines")
@@ -70,7 +68,7 @@ func TestStream_FlushesTrailingPartialLine(t *testing.T) {
 
 func TestStream_StopToken(t *testing.T) {
 	s, result := start(t, Config{
-		Source: chunkSource("", "keep\npartial<|end|>dropped\n"),
+		Source: chunkSource("keep\npartial<|end|>dropped\n"),
 		Stop:   []string{"<|end|>"},
 	})
 
@@ -78,13 +76,12 @@ func TestStream_StopToken(t *testing.T) {
 	_, err := s.Finish()
 	assert.NoError(t, err, "finish")
 	assert.Equal(t, "keep\npartial", result.Text, "text truncated at stop token")
-	assert.Equal(t, "stop", result.FinishReason, "finish reason")
-	assert.False(t, result.StoppedEarly, "stopped early")
+	assert.False(t, result.Truncated, "a stop token is an intentional end, not truncation")
 }
 
 func TestStream_StopTokenSplitAcrossChunks(t *testing.T) {
 	s, result := start(t, Config{
-		Source: chunkSource("", "line\n<|e", "nd|>dropped"),
+		Source: chunkSource("line\n<|e", "nd|>dropped"),
 		Stop:   []string{"<|end|>"},
 	})
 
@@ -92,12 +89,12 @@ func TestStream_StopTokenSplitAcrossChunks(t *testing.T) {
 	_, err := s.Finish()
 	assert.NoError(t, err, "finish")
 	assert.Equal(t, "line\n", result.Text, "text truncated at split stop token")
-	assert.Equal(t, "stop", result.FinishReason, "finish reason")
+	assert.False(t, result.Truncated, "truncated")
 }
 
 func TestStream_StopTokenInHoldbackAtStreamEnd(t *testing.T) {
 	s, result := start(t, Config{
-		Source: chunkSource("stop", "ab<|end|>"),
+		Source: chunkSource("ab<|end|>"),
 		Stop:   []string{"<|end|>"},
 	})
 
@@ -105,25 +102,38 @@ func TestStream_StopTokenInHoldbackAtStreamEnd(t *testing.T) {
 	_, err := s.Finish()
 	assert.NoError(t, err, "finish")
 	assert.Equal(t, "ab", result.Text, "text truncated at held-back stop token")
-	assert.Equal(t, "stop", result.FinishReason, "finish reason")
+	assert.False(t, result.Truncated, "truncated")
 }
 
 func TestStream_MaxLines(t *testing.T) {
 	s, result := start(t, Config{
-		Source:   chunkSource("", "a\nb\nc\nd\n"),
+		Source:   chunkSource("a\nb\nc\nd\n"),
 		MaxLines: 2,
 	})
 
 	assert.Equal(t, []string{"a", "b"}, drain(s), "lines capped at MaxLines")
 	_, err := s.Finish()
 	assert.NoError(t, err, "finish")
-	assert.Equal(t, "length", result.FinishReason, "finish reason")
-	assert.True(t, result.StoppedEarly, "stopped early")
+	assert.True(t, result.Truncated, "MaxLines cut the stream short")
+}
+
+func TestStream_SourceTruncationPropagates(t *testing.T) {
+	s, result := start(t, Config{
+		Source: func(ctx context.Context, emit func(string) bool) (bool, error) {
+			emit("cut off mid\n")
+			return true, nil // server hit its token limit
+		},
+	})
+
+	assert.Equal(t, []string{"cut off mid"}, drain(s), "lines")
+	_, err := s.Finish()
+	assert.NoError(t, err, "finish")
+	assert.True(t, result.Truncated, "transport truncation propagates")
 }
 
 func TestStream_PrefillDeliveredFirstAndExcludedFromResult(t *testing.T) {
 	s, result := start(t, Config{
-		Source:   chunkSource("stop", "generated\n"),
+		Source:   chunkSource("generated\n"),
 		Prefill:  "first\nsecond\n",
 		MaxLines: 3,
 	})
@@ -136,7 +146,7 @@ func TestStream_PrefillDeliveredFirstAndExcludedFromResult(t *testing.T) {
 
 func TestStream_PrefillNotCountedAgainstMaxLines(t *testing.T) {
 	s, _ := start(t, Config{
-		Source:   chunkSource("", "a\nb\n"),
+		Source:   chunkSource("a\nb\n"),
 		Prefill:  "p1\np2\n",
 		MaxLines: 2,
 	})
@@ -146,7 +156,7 @@ func TestStream_PrefillNotCountedAgainstMaxLines(t *testing.T) {
 
 func TestStream_TransformRewritesAndDropsLines(t *testing.T) {
 	s, _ := start(t, Config{
-		Source: chunkSource("stop", "keep\nDROP\nother\n"),
+		Source: chunkSource("keep\nDROP\nother\n"),
 		Transform: func(line string) (string, bool) {
 			if line == "DROP" {
 				return "", false
@@ -161,7 +171,7 @@ func TestStream_TransformRewritesAndDropsLines(t *testing.T) {
 func TestStream_ValidateFailureCancelsAndSurfacesError(t *testing.T) {
 	wantErr := errors.New("bad first line")
 	s, _ := start(t, Config{
-		Source: chunkSource("stop", "bad\ngood\n"),
+		Source: chunkSource("bad\ngood\n"),
 		Validate: func(line string) error {
 			if line == "bad" {
 				return wantErr
@@ -178,7 +188,7 @@ func TestStream_ValidateFailureCancelsAndSurfacesError(t *testing.T) {
 func TestStream_ValidateOnlyChecksFirstLine(t *testing.T) {
 	calls := 0
 	s, _ := start(t, Config{
-		Source: chunkSource("stop", "first\nsecond\n"),
+		Source: chunkSource("first\nsecond\n"),
 		Validate: func(line string) error {
 			calls++
 			return nil
@@ -192,8 +202,8 @@ func TestStream_ValidateOnlyChecksFirstLine(t *testing.T) {
 func TestStream_SourceErrorSurfacesFromFinish(t *testing.T) {
 	wantErr := errors.New("connection refused")
 	s, _ := start(t, Config{
-		Source: func(ctx context.Context, emit func(string) bool) (string, error) {
-			return "", wantErr
+		Source: func(ctx context.Context, emit func(string) bool) (bool, error) {
+			return false, wantErr
 		},
 	})
 
@@ -205,11 +215,11 @@ func TestStream_SourceErrorSurfacesFromFinish(t *testing.T) {
 func TestStream_CancelStopsSourceAndClosesLines(t *testing.T) {
 	sourceDone := make(chan struct{})
 	s, result := start(t, Config{
-		Source: func(ctx context.Context, emit func(string) bool) (string, error) {
+		Source: func(ctx context.Context, emit func(string) bool) (bool, error) {
 			emit("line\n")
 			<-ctx.Done()
 			close(sourceDone)
-			return "", ctx.Err()
+			return false, ctx.Err()
 		},
 	})
 
@@ -221,19 +231,5 @@ func TestStream_CancelStopsSourceAndClosesLines(t *testing.T) {
 
 	_, err := s.Finish()
 	assert.NoError(t, err, "finish")
-	assert.Equal(t, "cancelled", result.FinishReason, "finish reason")
-	assert.True(t, result.StoppedEarly, "stopped early")
-}
-
-func TestStream_WindowReportsConfig(t *testing.T) {
-	s, _ := start(t, Config{
-		Source:      chunkSource("stop"),
-		WindowStart: 7,
-		OldLines:    []string{"a", "b"},
-	})
-	drain(s)
-
-	startLine, oldLines := s.Window()
-	assert.Equal(t, 7, startLine, "window start")
-	assert.Equal(t, []string{"a", "b"}, oldLines, "old lines")
+	assert.True(t, result.Truncated, "cancellation truncates the result")
 }

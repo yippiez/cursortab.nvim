@@ -45,8 +45,8 @@ func (o OpenAI) Call(ctx context.Context, req *openai.CompletionRequest) (*opena
 	result := &openai.CompletionResult{}
 	if len(resp.Choices) > 0 {
 		result = &openai.CompletionResult{
-			Text:         resp.Choices[0].Text,
-			FinishReason: resp.Choices[0].FinishReason,
+			Text:      resp.Choices[0].Text,
+			Truncated: resp.Choices[0].FinishReason == "length",
 		}
 	}
 	logOpenAIResponse(o.name, result)
@@ -87,11 +87,10 @@ func (o OpenAI) Request(prompt string, stop []string) *openai.CompletionRequest 
 }
 
 func logOpenAIResponse(name string, result *openai.CompletionResult) {
-	logger.Debug("%s provider response:\n  Text length: %d chars\n  FinishReason: %s\n  StoppedEarly: %v\n  Text:\n%s",
+	logger.Debug("%s provider response:\n  Text length: %d chars\n  Truncated: %v\n  Text:\n%s",
 		name,
 		len(result.Text),
-		result.FinishReason,
-		result.StoppedEarly,
+		result.Truncated,
 		result.Text)
 }
 
@@ -100,10 +99,9 @@ func logOpenAIResponse(name string, result *openai.CompletionResult) {
 // validation. Zeta2 uses a cursor-marker line transform and its own stream
 // window. Engine sees only the CompletionStream returned by StartStream.
 type OpenAIStreamArgs struct {
-	WindowStart        int
-	OldLines           []string
+	Window             engine.Window
 	Prefill            string
-	FirstLineValidator func(*RequestState, string) error
+	FirstLineValidator func(string) error
 	LineTransform      func(string) (string, bool)
 }
 
@@ -115,40 +113,31 @@ type OpenAIStreamFlow interface {
 // StartStream builds the leaf request and runs it through a streaming.Stream,
 // which owns the line-level runtime. The leaf's Parse runs in Finish on the
 // accumulated text, exactly as in the batch path.
-func (o OpenAI) StartStream(ctx context.Context, input sourcectx.CompletionInput, config *types.ProviderConfig, flow OpenAIStreamFlow) (engine.CompletionStream, error) {
+func (o OpenAI) StartStream(ctx context.Context, input sourcectx.CompletionInput, config *types.ProviderConfig, flow OpenAIStreamFlow) (engine.CompletionStream, engine.Window, error) {
 	state := prepareRequestState(input, config)
 	req, err := flow.Build(state)
 	if err != nil {
-		return nil, err
+		return nil, engine.Window{}, err
 	}
 	args := flow.StreamArgs(state)
 
-	var validate func(string) error
-	if args.FirstLineValidator != nil {
-		validate = func(line string) error {
-			return args.FirstLineValidator(state, line)
-		}
-	}
-
-	return streaming.Start(ctx, streaming.Config{
-		Source: func(ctx context.Context, emit func(string) bool) (string, error) {
+	stream := streaming.Start(ctx, streaming.Config{
+		Source: func(ctx context.Context, emit func(string) bool) (bool, error) {
 			return o.client.StreamCompletion(ctx, req, emit)
 		},
-		Stop:        req.Stop,
-		MaxLines:    state.Window.MaxLines,
-		Prefill:     args.Prefill,
-		Transform:   args.LineTransform,
-		Validate:    validate,
-		WindowStart: args.WindowStart,
-		OldLines:    args.OldLines,
+		Stop:      req.Stop,
+		MaxLines:  state.Window.MaxLines,
+		Prefill:   args.Prefill,
+		Transform: args.LineTransform,
+		Validate:  args.FirstLineValidator,
 		Finish: func(r streaming.Result) (*types.CompletionResponse, error) {
 			result := &openai.CompletionResult{
-				Text:         r.Text,
-				FinishReason: r.FinishReason,
-				StoppedEarly: r.StoppedEarly,
+				Text:      r.Text,
+				Truncated: r.Truncated,
 			}
 			logOpenAIResponse(o.name, result)
 			return flow.Parse(state, result)
 		},
-	}), nil
+	})
+	return stream, args.Window, nil
 }

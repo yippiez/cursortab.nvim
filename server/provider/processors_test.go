@@ -210,34 +210,34 @@ func TestAnchorTruncation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		text         string
-		finishReason string
-		threshold    float64
-		wantDone     bool
-		wantEndLine  int
+		name        string
+		text        string
+		truncated   bool
+		threshold   float64
+		wantDone    bool
+		wantEndLine int
 	}{
 		{
-			name:         "not truncated",
-			text:         "line 1\nline 2",
-			finishReason: "stop",
-			threshold:    0.75,
-			wantDone:     false,
+			name:      "not truncated",
+			text:      "line 1\nline 2",
+			truncated: false,
+			threshold: 0.75,
+			wantDone:  false,
 		},
 		{
-			name:         "truncated but enough lines",
-			text:         "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nincomplete",
-			finishReason: "length",
-			threshold:    0.75,
-			wantDone:     false,
-			wantEndLine:  15,
+			name:        "truncated but enough lines",
+			text:        "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nincomplete",
+			truncated:   true,
+			threshold:   0.75,
+			wantDone:    false,
+			wantEndLine: 15,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := stateForLines(oldLines, 1, 0)
-			_, endLineInc, _, done := AnchorTruncationText("test", state, tt.text, tt.finishReason, false, tt.threshold)
+			_, endLineInc, _, done := AnchorTruncationText("test", state, tt.text, tt.truncated, tt.threshold)
 
 			assert.Equal(t, tt.wantDone, done, "AnchorTruncation done status")
 			assert.Equal(t, tt.wantEndLine, endLineInc, "AnchorTruncation end line")
@@ -313,8 +313,8 @@ func TestFirstLineAnchorChecker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := stateForLines(oldLines, 1, 0)
 
-			checker := FirstLineAnchorChecker(tt.maxAnchorRatio)
-			err := checker(ctx, tt.firstLine)
+			checker := FirstLineAnchorChecker(ctx, tt.maxAnchorRatio)
+			err := checker(tt.firstLine)
 
 			gotErr := err != nil
 			assert.Equal(t, tt.wantErr, gotErr, "FirstLineAnchorChecker error status")
@@ -328,8 +328,8 @@ func TestFirstLineAnchorChecker_SmallFile(t *testing.T) {
 
 	ctx := stateForLines(oldLines, 1, 0)
 
-	checker := FirstLineAnchorChecker(0.25)
-	err := checker(ctx, "completely different")
+	checker := FirstLineAnchorChecker(ctx, 0.25)
+	err := checker("completely different")
 
 	// Should not error for small files
 	assert.NoError(t, err, "FirstLineAnchorChecker for small files")

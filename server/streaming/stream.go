@@ -16,17 +16,18 @@ const lineBufferSize = 100
 
 // Result is the accumulated outcome of a finished stream. Text excludes
 // prefill: it is exactly what the source emitted (up to stop tokens and line
-// limits).
+// limits). Truncated reports whether the text was cut short before the model
+// finished — by the transport's token limit, MaxLines, or cancellation.
 type Result struct {
-	Text         string
-	FinishReason string
-	StoppedEarly bool
+	Text      string
+	Truncated bool
 }
 
 // Source produces raw text chunks, calling emit for each chunk as it arrives.
-// It returns the finish reason reported by the transport, and should return
-// promptly when emit returns false or ctx is cancelled.
-type Source func(ctx context.Context, emit func(text string) bool) (finishReason string, err error)
+// It reports whether the transport truncated the output (e.g. a server-side
+// token limit), and should return promptly when emit returns false or ctx is
+// cancelled.
+type Source func(ctx context.Context, emit func(text string) bool) (truncated bool, err error)
 
 // Config declares the per-request behavior of a Stream.
 type Config struct {
@@ -47,9 +48,6 @@ type Config struct {
 	// stream and is returned from Finish.
 	Validate func(line string) error
 
-	// WindowStart and OldLines describe the buffer window the stream rewrites.
-	WindowStart int
-	OldLines    []string
 	// Finish converts the accumulated result into the provider's parse
 	// verdict once the stream ends.
 	Finish func(Result) (*types.CompletionResponse, error)
@@ -87,11 +85,6 @@ func (s *Stream) Lines() <-chan string {
 	return s.lines
 }
 
-// Window reports the buffer window the stream rewrites.
-func (s *Stream) Window() (int, []string) {
-	return s.cfg.WindowStart, s.cfg.OldLines
-}
-
 // Cancel stops the source and closes Lines.
 func (s *Stream) Cancel() {
 	s.cancel()
@@ -116,12 +109,12 @@ func (s *Stream) run(ctx context.Context) {
 	a := &assembler{cfg: &s.cfg, ctx: ctx, out: s.lines}
 
 	if !a.sendPrefill() {
-		s.result = Result{FinishReason: "cancelled", StoppedEarly: true}
+		s.result = Result{Truncated: true}
 		return
 	}
 
-	finishReason, err := s.cfg.Source(ctx, a.consume)
-	s.result, s.err = a.finalize(finishReason, err)
+	truncated, err := s.cfg.Source(ctx, a.consume)
+	s.result, s.err = a.finalize(truncated, err)
 }
 
 type haltReason int
@@ -187,12 +180,12 @@ func (a *assembler) consume(chunk string) bool {
 }
 
 // finalize settles the stream outcome after the source returns.
-func (a *assembler) finalize(finishReason string, err error) (Result, error) {
+func (a *assembler) finalize(truncated bool, err error) (Result, error) {
 	if a.halt == haltNone {
 		if a.ctx.Err() != nil {
 			a.halt = haltCancelled
 		} else if err != nil {
-			return a.result("error", true), err
+			return a.result(true), err
 		} else if a.pending != "" {
 			// Natural end of stream: settle the holdback.
 			if idx, ok := a.findStop(a.pending); ok {
@@ -214,19 +207,17 @@ func (a *assembler) finalize(finishReason string, err error) (Result, error) {
 
 	switch a.halt {
 	case haltValidate:
-		return a.result("error", true), a.err
-	case haltMaxLines:
-		return a.result("length", true), nil
+		return a.result(true), a.err
+	case haltMaxLines, haltCancelled:
+		return a.result(true), nil
 	case haltStop:
-		return a.result("stop", false), nil
-	case haltCancelled:
-		return a.result("cancelled", true), nil
+		return a.result(false), nil
 	}
-	return a.result(finishReason, false), nil
+	return a.result(truncated), nil
 }
 
-func (a *assembler) result(finishReason string, stoppedEarly bool) Result {
-	return Result{Text: a.text.String(), FinishReason: finishReason, StoppedEarly: stoppedEarly}
+func (a *assembler) result(truncated bool) Result {
+	return Result{Text: a.text.String(), Truncated: truncated}
 }
 
 // commit accumulates text and delivers each completed line.

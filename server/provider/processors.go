@@ -114,13 +114,9 @@ func StripRepetitionText(text string) (string, *types.CompletionResponse, bool) 
 	return strings.Join(lines[:cutIdx], "\n"), nil, false
 }
 
-func AnchorTruncationText(providerName string, ctx *RequestState, text, finishReason string, stoppedEarly bool, threshold float64) (string, int, *types.CompletionResponse, bool) {
-	if finishReason != "length" && !stoppedEarly {
+func AnchorTruncationText(providerName string, ctx *RequestState, text string, truncated bool, threshold float64) (string, int, *types.CompletionResponse, bool) {
+	if !truncated {
 		return text, 0, nil, false
-	}
-
-	if stoppedEarly {
-		finishReason = "length"
 	}
 
 	newLines := strings.Split(text, "\n")
@@ -129,7 +125,7 @@ func AnchorTruncationText(providerName string, ctx *RequestState, text, finishRe
 	oldLines := ctx.Input.Current.File.Lines[ctx.Window.Start:windowEnd]
 
 	processedLines, endLineInc, shouldReject := handleTruncatedCompletionWithAnchor(
-		newLines, oldLines, finishReason, ctx.Window.Start, windowEnd,
+		newLines, oldLines, ctx.Window.Start, windowEnd,
 	)
 	if shouldReject {
 		logger.Debug("%s: rejected, truncation handling failed", providerName)
@@ -176,8 +172,8 @@ func ValidateAnchorPositionText(providerName string, ctx *RequestState, text str
 	return nil, false
 }
 
-func FirstLineAnchorChecker(maxAnchorRatio float64) func(*RequestState, string) error {
-	return func(ctx *RequestState, firstLine string) error {
+func FirstLineAnchorChecker(ctx *RequestState, maxAnchorRatio float64) func(string) error {
+	return func(firstLine string) error {
 		oldLines := ctx.Input.Current.File.Lines[ctx.Window.Start : ctx.Window.Start+len(ctx.Window.Lines)]
 		_, _, reject := checkAnchorPosition(firstLine, oldLines, maxAnchorRatio)
 		if reject {
@@ -236,17 +232,17 @@ func findAnchorLineFullSearch(needle string, oldLines []string) int {
 	return bestIdx
 }
 
-// handleTruncatedCompletionWithAnchor processes completion lines when the model hits max_tokens,
-// using anchor matching to find the correct replacement range.
+// handleTruncatedCompletionWithAnchor processes completion lines when the
+// output was truncated, dropping the (possibly partial) last line and using
+// anchor matching to find the correct replacement range.
 func handleTruncatedCompletionWithAnchor(
 	newLines []string,
 	oldLines []string,
-	finishReason string,
 	windowStart, windowEnd int,
 ) ([]string, int, bool) {
 	endLineInc := windowEnd
 
-	if finishReason == "length" && len(newLines) > 0 {
+	if len(newLines) > 0 {
 		newLines = newLines[:len(newLines)-1]
 
 		if len(newLines) == 0 {

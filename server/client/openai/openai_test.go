@@ -190,14 +190,14 @@ func sseServer(t *testing.T, payload ...string) *httptest.Server {
 	}))
 }
 
-func collectChunks(t *testing.T, client *Client, req *CompletionRequest) ([]string, string, error) {
+func collectChunks(t *testing.T, client *Client, req *CompletionRequest) ([]string, bool, error) {
 	t.Helper()
 	var chunks []string
-	finishReason, err := client.StreamCompletion(context.Background(), req, func(text string) bool {
+	truncated, err := client.StreamCompletion(context.Background(), req, func(text string) bool {
 		chunks = append(chunks, text)
 		return true
 	})
-	return chunks, finishReason, err
+	return chunks, truncated, err
 }
 
 func TestStreamCompletion_EmitsChunks(t *testing.T) {
@@ -237,7 +237,7 @@ func TestStreamCompletion_SetsStreamHeaders(t *testing.T) {
 	assert.True(t, sent.Stream, "stream flag on the wire")
 }
 
-func TestStreamCompletion_CapturesFinishReason(t *testing.T) {
+func TestStreamCompletion_MapsFinishReasonToTruncated(t *testing.T) {
 	server := sseServer(t,
 		`data: {"id":"1","choices":[{"text":"done\n","index":0,"finish_reason":"stop"}]}`,
 		`data: [DONE]`,
@@ -245,10 +245,24 @@ func TestStreamCompletion_CapturesFinishReason(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "", "")
-	_, finishReason, err := collectChunks(t, client, &CompletionRequest{Model: "test-model", Prompt: "hello"})
+	_, truncated, err := collectChunks(t, client, &CompletionRequest{Model: "test-model", Prompt: "hello"})
 
 	assert.NoError(t, err, "stream error")
-	assert.Equal(t, "stop", finishReason, "finish reason")
+	assert.False(t, truncated, "finish reason stop is not truncation")
+}
+
+func TestStreamCompletion_LengthFinishReasonIsTruncated(t *testing.T) {
+	server := sseServer(t,
+		`data: {"id":"1","choices":[{"text":"cut\n","index":0,"finish_reason":"length"}]}`,
+		`data: [DONE]`,
+	)
+	defer server.Close()
+
+	client := NewClient(server.URL, "", "")
+	_, truncated, err := collectChunks(t, client, &CompletionRequest{Model: "test-model", Prompt: "hello"})
+
+	assert.NoError(t, err, "stream error")
+	assert.True(t, truncated, "finish reason length is truncation")
 }
 
 func TestStreamCompletion_EmitFalseStopsStream(t *testing.T) {

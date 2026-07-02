@@ -190,7 +190,7 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 	} else {
 		text = stripped
 	}
-	if trimmed, resp, done := dropLastLineIfTruncatedText(text, result.FinishReason, result.StoppedEarly); done {
+	if trimmed, resp, done := dropLastLineIfTruncatedText(text, result.Truncated); done {
 		return resp, nil
 	} else {
 		text = trimmed
@@ -249,8 +249,8 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 	return provider.BuildCompletion(ctx, current.Cursor.Row, current.Cursor.Row, resultLines), nil
 }
 
-func dropLastLineIfTruncatedText(text, finishReason string, stoppedEarly bool) (string, *types.CompletionResponse, bool) {
-	if finishReason != "length" && !stoppedEarly {
+func dropLastLineIfTruncatedText(text string, truncated bool) (string, *types.CompletionResponse, bool) {
+	if !truncated {
 		return text, nil, false
 	}
 

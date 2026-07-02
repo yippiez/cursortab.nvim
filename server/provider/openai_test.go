@@ -11,6 +11,7 @@ import (
 	"cursortab/assert"
 	"cursortab/client/openai"
 	sourcectx "cursortab/ctx"
+	"cursortab/engine"
 	"cursortab/types"
 )
 
@@ -74,13 +75,13 @@ func TestStartStream_DeliversLinesAndParsesAccumulatedText(t *testing.T) {
 	oldLines := []string{"old alpha", "old beta"}
 	flow := &fakeStreamFlow{
 		openAI:     NewOpenAI("test", config),
-		streamArgs: OpenAIStreamArgs{WindowStart: 3, OldLines: oldLines},
+		streamArgs: OpenAIStreamArgs{Window: engine.Window{Start: 3, OldLines: oldLines}},
 		response: &types.CompletionResponse{
 			Completion: &types.Completion{StartLine: 4, EndLineInc: 5, Lines: []string{"alpha", "beta"}},
 		},
 	}
 
-	stream, err := flow.openAI.StartStream(context.Background(), streamInput(oldLines), config, flow)
+	stream, window, err := flow.openAI.StartStream(context.Background(), streamInput(oldLines), config, flow)
 	assert.NoError(t, err, "StartStream")
 
 	var lines []string
@@ -89,9 +90,7 @@ func TestStartStream_DeliversLinesAndParsesAccumulatedText(t *testing.T) {
 	}
 	assert.Equal(t, []string{"alpha", "beta"}, lines, "streamed lines")
 
-	windowStart, windowLines := stream.Window()
-	assert.Equal(t, 3, windowStart, "window start")
-	assert.Equal(t, oldLines, windowLines, "window old lines")
+	assert.Equal(t, engine.Window{Start: 3, OldLines: oldLines}, window, "stream window")
 
 	resp, err := stream.Finish()
 	assert.NoError(t, err, "Finish")
@@ -118,7 +117,7 @@ func TestStartStream_AppliesPrefillAndTransform(t *testing.T) {
 		response: &types.CompletionResponse{},
 	}
 
-	stream, err := flow.openAI.StartStream(context.Background(), streamInput([]string{"x"}), config, flow)
+	stream, _, err := flow.openAI.StartStream(context.Background(), streamInput([]string{"x"}), config, flow)
 	assert.NoError(t, err, "StartStream")
 
 	var lines []string
@@ -144,7 +143,7 @@ func TestStartStream_TransportErrorSurfacesFromFinish(t *testing.T) {
 		response: &types.CompletionResponse{},
 	}
 
-	stream, err := flow.openAI.StartStream(context.Background(), streamInput([]string{"x"}), config, flow)
+	stream, _, err := flow.openAI.StartStream(context.Background(), streamInput([]string{"x"}), config, flow)
 	assert.NoError(t, err, "StartStream")
 
 	for range stream.Lines() {

@@ -7,17 +7,16 @@ import (
 	"cursortab/utils"
 )
 
-func (e *Engine) startCompletionStream(stream CompletionStream, manual bool) {
+func (e *Engine) startCompletionStream(stream CompletionStream, window Window, manual bool) {
 	e.state = stateStreamingCompletion
 
 	viewportTop, viewportBottom := e.buffer.ViewportBounds()
-	windowStart, oldLines := stream.Window()
 
 	e.streamingState = &streamingState{
 		Manual: manual,
 		StageBuilder: text.NewIncrementalStageBuilder(
-			oldLines,
-			windowStart+1, // baseLineOffset (1-indexed)
+			window.OldLines,
+			window.Start+1, // baseLineOffset (1-indexed)
 			e.config.CursorPrediction.ProximityThreshold,
 			e.config.MaxVisibleLines,
 			viewportTop,

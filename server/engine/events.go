@@ -38,6 +38,7 @@ type Event struct {
 	Manual    bool
 	Response  *types.CompletionResponse
 	Stream    CompletionStream
+	Window    Window
 	Err       error
 }
 
@@ -309,7 +310,7 @@ func (e *Engine) handleBackgroundEvent(event Event) bool {
 			return true
 		}
 		if event.Stream != nil {
-			e.startCompletionStream(event.Stream, event.Manual)
+			e.startCompletionStream(event.Stream, event.Window, event.Manual)
 			return true
 		}
 		e.handleCompletionReadyImpl(event.Response, event.Manual)

@@ -75,7 +75,7 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 	} else {
 		text = stripped
 	}
-	if resp, done := rejectTruncatedResult(result.FinishReason); done {
+	if resp, done := rejectTruncatedResult(result.Truncated); done {
 		return resp, nil
 	}
 
@@ -88,9 +88,9 @@ func (p *Provider) Parse(ctx *provider.RequestState, result *openai.CompletionRe
 	return provider.BuildCompletion(ctx, current.Cursor.Row, current.Cursor.Row, []string{newLine}), nil
 }
 
-func rejectTruncatedResult(finishReason string) (*types.CompletionResponse, bool) {
-	if finishReason == "length" {
-		logger.Info("inline: rejected, truncated (finish_reason=length)")
+func rejectTruncatedResult(truncated bool) (*types.CompletionResponse, bool) {
+	if truncated {
+		logger.Info("inline: rejected, truncated")
 		return provider.EmptyResponse(), true
 	}
 	return nil, false
