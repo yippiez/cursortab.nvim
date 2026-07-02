@@ -6,6 +6,7 @@ import (
 
 	"cursortab/buffer"
 	"cursortab/ctx"
+	"cursortab/metrics"
 	"cursortab/text"
 	"cursortab/types"
 )
@@ -62,6 +63,15 @@ type Provider interface {
 
 type StreamingProvider interface {
 	StreamCompletion(ctx context.Context, input ctx.CompletionInput) (CompletionStream, Window, error)
+}
+
+// ContextPolicy decides which context materials a completion request collects
+// and with what limits, and observes completion outcomes so the plan can
+// adapt. Plan receives the provider-supported materials and the engine's base
+// limits; it returns the materials to collect and the limits to apply.
+type ContextPolicy interface {
+	Plan(supported ctx.Materials, base ctx.CollectionLimits) (ctx.Materials, ctx.CollectionLimits)
+	RecordOutcome(event metrics.EventType)
 }
 
 // Window is the buffer region a completion stream rewrites. The engine seeds
@@ -264,10 +274,11 @@ type EngineConfig struct {
 	IdleCompletionDelay    time.Duration
 	TextChangeDebounce     time.Duration
 	CursorPrediction       CursorPredictionConfig
-	MaxDiffTokens          int      // Maximum tokens for diff history per file (0 = no limit)
-	MaxVisibleLines        int      // Maximum lines per stage (0 = no limit)
-	CompleteInInsert       bool     // Show completions in insert mode
-	CompleteInNormal       bool     // Show completions in normal mode
-	DisabledIn             []string // Treesitter scopes where completions are suppressed
-	DisableProviderMetrics bool     // Skip wiring provider as metrics.Sender (eval harness sets this)
+	MaxDiffTokens          int           // Maximum tokens for diff history per file (0 = no limit)
+	MaxVisibleLines        int           // Maximum lines per stage (0 = no limit)
+	CompleteInInsert       bool          // Show completions in insert mode
+	CompleteInNormal       bool          // Show completions in normal mode
+	DisabledIn             []string      // Treesitter scopes where completions are suppressed
+	DisableProviderMetrics bool          // Skip wiring provider as metrics.Sender (eval harness sets this)
+	ContextPolicy          ContextPolicy // Data-driven context plan (nil = provider defaults)
 }

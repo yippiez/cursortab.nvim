@@ -10,6 +10,7 @@ import (
 
 	"cursortab/assert"
 	"cursortab/ctx"
+	"cursortab/metrics"
 	"cursortab/text"
 	"cursortab/types"
 )
@@ -120,6 +121,73 @@ func TestRequestCompletion_CollectsOnlyRequiredMaterials(t *testing.T) {
 	diagnostics, ok := ctx.Find[ctx.Diagnostics](prov.lastInput.Materials)
 	assert.True(t, ok, "diagnostics material should be passed to provider")
 	assert.Equal(t, buf.diagnostics, diagnostics.Data, "diagnostics data")
+}
+
+type fakeContextPolicy struct {
+	materials ctx.Materials
+	limits    ctx.CollectionLimits
+	outcomes  []metrics.EventType
+}
+
+func (p *fakeContextPolicy) Plan(ctx.Materials, ctx.CollectionLimits) (ctx.Materials, ctx.CollectionLimits) {
+	return p.materials, p.limits
+}
+
+func (p *fakeContextPolicy) RecordOutcome(event metrics.EventType) {
+	p.outcomes = append(p.outcomes, event)
+}
+
+func TestRequestCompletion_ContextPolicyShapesCollection(t *testing.T) {
+	buf := newMockBuffer()
+	buf.lines = []string{"existing"}
+	buf.row = 1
+	buf.col = 0
+	buf.diagnostics = &types.Diagnostics{FilePath: "test.go"}
+	buf.treesitter = &types.TreesitterContext{EnclosingSignature: "func main()"}
+
+	prov := newMockProvider()
+	prov.materials = ctx.Materials{ctx.Diagnostics{}, ctx.Treesitter{}}
+	clock := newMockClock()
+	eng, cancel := createTestEngineWithContext(buf, prov, clock)
+	defer cancel()
+	eng.config.ContextPolicy = &fakeContextPolicy{
+		materials: ctx.Materials{ctx.Treesitter{}},
+		limits:    ctx.CollectionLimits{MaxSiblings: 7},
+	}
+
+	eng.requestCompletion(types.CompletionSourceTyping, true)
+
+	select {
+	case event := <-eng.eventChan:
+		assert.Equal(t, EventCompletionReady, event.Type, "completion should be ready")
+	case <-time.After(time.Second):
+		t.Fatal("completion ready event timed out")
+	}
+
+	assert.Equal(t, 0, buf.diagnosticsCalls, "policy-dropped material should not be collected")
+	assert.Equal(t, 1, buf.treesitterCalls, "policy-kept material should be collected")
+	assert.Equal(t, 7, buf.lastMaxSiblings, "policy limits should apply")
+
+	_, ok := ctx.Find[ctx.Diagnostics](prov.lastInput.Materials)
+	assert.False(t, ok, "dropped material should not reach provider")
+}
+
+func TestSendMetric_RecordsOutcomesOnContextPolicy(t *testing.T) {
+	buf := newMockBuffer()
+	prov := newMockProvider()
+	clock := newMockClock()
+	eng, cancel := createTestEngineWithContext(buf, prov, clock)
+	defer cancel()
+	policy := &fakeContextPolicy{}
+	eng.config.ContextPolicy = policy
+
+	eng.currentSnapshot = &metrics.Snapshot{}
+	eng.sendMetric(metrics.EventShown)
+	eng.sendMetric(metrics.EventAccepted)
+	// No completion pending anymore: nothing further should be recorded.
+	eng.sendMetric(metrics.EventIgnored)
+
+	assert.Equal(t, []metrics.EventType{metrics.EventShown, metrics.EventAccepted}, policy.outcomes, "recorded outcomes")
 }
 
 func TestCompletionError_IgnoresStaleRequest(t *testing.T) {

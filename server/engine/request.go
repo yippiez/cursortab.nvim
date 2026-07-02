@@ -41,7 +41,11 @@ func (e *Engine) collectCompletionInput(parent context.Context, sourceInput ctx.
 
 func (e *Engine) prepareCompletionInput(parent context.Context, opts completionInputOptions) (ctx.CompletionInput, bool, error) {
 	requirements := e.provider.RequiredMaterials()
-	sourceInput := e.buildContextSourceInput(opts, requirements)
+	limits := e.baseCollectionLimits()
+	if policy := e.config.ContextPolicy; policy != nil {
+		requirements, limits = policy.Plan(requirements, limits)
+	}
+	sourceInput := e.buildContextSourceInput(opts, requirements, limits)
 	input := ctx.CompletionInput{Current: sourceInput.Current}
 	if !completionInputCompatible(e.provider.CompletionKind(), sourceInput.Current) {
 		return input, false, nil

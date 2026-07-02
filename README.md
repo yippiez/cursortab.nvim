@@ -201,6 +201,7 @@ require("cursortab").setup({
     },
     ignore_filetypes = { "", "terminal" }, -- Filetypes to skip completions
     ignore_gitignored = true,    -- Skip files matched by .gitignore
+    adaptive_context = false,    -- Evolve the completion context plan from accept/reject feedback (per user)
   },
 
   provider = {

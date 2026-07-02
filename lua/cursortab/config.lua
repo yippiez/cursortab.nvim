@@ -28,6 +28,7 @@
 ---@field ignore_filetypes string[] Filetypes to skip completions
 ---@field ignore_gitignored boolean Skip files matched by .gitignore
 ---@field enabled_modes string[] Modes where completions are active ("insert", "normal")
+---@field adaptive_context boolean Evolve the completion context plan from accept/reject feedback (per user, stored in state_dir)
 
 ---@class CursortabFIMTokensConfig
 ---@field prefix string FIM prefix token (e.g., "<|fim_prefix|>")
@@ -112,6 +113,7 @@ local default_config = {
 		},
 		disabled_in = {}, -- Tree-sitter scopes where completions are suppressed (e.g., "comment", "string")
 		enabled_modes = { "insert", "normal" }, -- Modes where completions are active
+		adaptive_context = false, -- Evolve the completion context plan from accept/reject feedback (per user)
 		ignore_paths = { -- Glob patterns for files to skip completions
 			"*.min.js",
 			"*.min.css",
@@ -399,6 +401,9 @@ local function validate_config(cfg)
 		end
 		if cfg.behavior.ignore_gitignored ~= nil and type(cfg.behavior.ignore_gitignored) ~= "boolean" then
 			error("[cursortab.nvim] behavior.ignore_gitignored must be a boolean")
+		end
+		if cfg.behavior.adaptive_context ~= nil and type(cfg.behavior.adaptive_context) ~= "boolean" then
+			error("[cursortab.nvim] behavior.adaptive_context must be a boolean")
 		end
 	end
 

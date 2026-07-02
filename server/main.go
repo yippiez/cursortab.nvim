@@ -28,6 +28,7 @@ type BehaviorConfig struct {
 	DisabledIn          []string               `json:"disabled_in"`
 	CompleteInInsert    bool                   `json:"complete_in_insert"`
 	CompleteInNormal    bool                   `json:"complete_in_normal"`
+	AdaptiveContext     bool                   `json:"adaptive_context"` // evolve the context plan from completion outcomes
 }
 
 // FIMTokensConfig holds FIM token settings

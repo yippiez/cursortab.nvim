@@ -539,12 +539,17 @@ func (e *Engine) recordMetricsShown(info *types.MetricsInfo, manual bool) {
 }
 
 func (e *Engine) sendMetric(eventType metrics.EventType) {
-	if e.metricSender == nil {
+	if e.metricSender == nil && e.config.ContextPolicy == nil {
 		return
 	}
-	// Need either a provider ID or a snapshot to send anything useful
+	// Need either a provider ID or a snapshot to attribute the event to a
+	// shown completion
 	if e.currentMetrics.ID == "" && e.currentSnapshot == nil {
 		return
+	}
+
+	if e.config.ContextPolicy != nil {
+		e.config.ContextPolicy.RecordOutcome(eventType)
 	}
 
 	event := metrics.Event{
@@ -561,6 +566,10 @@ func (e *Engine) sendMetric(eventType metrics.EventType) {
 		} else {
 			e.completionsSinceAccept++
 		}
+	}
+
+	if e.metricSender == nil {
+		return
 	}
 
 	select {

@@ -99,6 +99,7 @@ Full configuration with defaults: >lua
       },
       ignore_filetypes = { "", "terminal" }, -- filetypes to skip completions
       ignore_gitignored = true,     -- skip files matched by .gitignore
+      adaptive_context = false,     -- evolve the context plan from accept/reject feedback
     },
 
     provider = {
@@ -215,6 +216,14 @@ BEHAVIOR OPTIONS                                    *cursortab-config-behavior*
         enabled_modes = { "normal" }          -- normal-only
         enabled_modes = {}                    -- manual-only
 <
+
+  `adaptive_context`
+      Evolve the plan for the context sent to the completion provider (which
+      context sources are included and how much of each) from your accept,
+      reject, and ignore feedback. Learning is per user and per provider,
+      stored in `state_dir`/context_policy.json; delete that file to reset.
+      When disabled, the last learned plan (or the built-in default) is
+      served unchanged (default: false).
 
 behavior.cursor_prediction            *cursortab-config-behavior-cursor-prediction*
 

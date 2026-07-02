@@ -14,21 +14,27 @@ type completionInputOptions struct {
 	hasCursorOverride bool
 }
 
-func (e *Engine) buildContextSourceInput(opts completionInputOptions, requirements ctx.Materials) ctx.ContextSourceInput {
+func (e *Engine) buildContextSourceInput(opts completionInputOptions, requirements ctx.Materials, limits ctx.CollectionLimits) ctx.ContextSourceInput {
 	current := e.buildCurrentSnapshot(opts)
 	snapshot := e.buildFileContextSnapshot(requirements)
 	return ctx.ContextSourceInput{
 		Current:  current,
 		Snapshot: snapshot,
 		Buffer:   e.buffer,
-		Limits: ctx.CollectionLimits{
-			MaxSiblings:        defaultMaxSiblings,
-			MaxDiffBytes:       defaultMaxDiffBytes,
-			MaxChangedSymbols:  defaultMaxChangedSymbols,
-			MaxRecentSnapshots: defaultMaxRecentSnapshots,
-			MaxDiffTokens:      e.config.MaxDiffTokens,
-			MaxUserActions:     defaultMaxUserActions,
-		},
+		Limits:   limits,
+	}
+}
+
+// baseCollectionLimits are the engine's built-in collection bounds, before any
+// context policy overrides.
+func (e *Engine) baseCollectionLimits() ctx.CollectionLimits {
+	return ctx.CollectionLimits{
+		MaxSiblings:        defaultMaxSiblings,
+		MaxDiffBytes:       defaultMaxDiffBytes,
+		MaxChangedSymbols:  defaultMaxChangedSymbols,
+		MaxRecentSnapshots: defaultMaxRecentSnapshots,
+		MaxDiffTokens:      e.config.MaxDiffTokens,
+		MaxUserActions:     defaultMaxUserActions,
 	}
 }
 

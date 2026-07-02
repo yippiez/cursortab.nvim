@@ -119,6 +119,7 @@ local function start_daemon()
 			disabled_in = cfg.behavior.disabled_in,
 			complete_in_insert = vim.tbl_contains(cfg.behavior.enabled_modes, "insert"),
 			complete_in_normal = vim.tbl_contains(cfg.behavior.enabled_modes, "normal"),
+			adaptive_context = cfg.behavior.adaptive_context,
 			cursor_prediction = {
 				enabled = cfg.behavior.cursor_prediction.enabled,
 				auto_advance = cfg.behavior.cursor_prediction.auto_advance,

@@ -31,6 +31,7 @@ type mockBuffer struct {
 	treesitter       *types.TreesitterContext
 	diagnosticsCalls int
 	treesitterCalls  int
+	lastMaxSiblings  int
 	// Track method calls
 	syncCalls              int
 	clearUICalls           int
@@ -145,6 +146,7 @@ func (b *mockBuffer) TreesitterSymbols(row int, col int, maxSiblings int) *types
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.treesitterCalls++
+	b.lastMaxSiblings = maxSiblings
 	return b.treesitter
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"cursortab/engine"
 	"cursortab/logger"
 	"cursortab/metrics"
+	"cursortab/policy"
 	"cursortab/provider/copilot"
 	"cursortab/provider/dataset"
 	"cursortab/provider/fim"
@@ -118,6 +120,17 @@ func NewDaemon(config Config) (*Daemon, error) {
 		)
 	}
 
+	// Context assembly is driven by the per-user genome persisted in
+	// state_dir. With adaptive_context enabled the genome also evolves from
+	// completion outcomes; otherwise it is served as-is.
+	var contextPolicy engine.ContextPolicy
+	if config.Behavior.AdaptiveContext {
+		rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+		contextPolicy = policy.NewOptimizer(config.StateDir, config.Provider.Type, rng)
+	} else {
+		contextPolicy = policy.NewStatic(config.StateDir, config.Provider.Type)
+	}
+
 	eng, err := engine.NewEngine(prov, buf, engine.EngineConfig{
 		NsID:                config.NsID,
 		ProviderName:        config.Provider.Type,
@@ -134,6 +147,7 @@ func NewDaemon(config Config) (*Daemon, error) {
 		DisabledIn:       config.Behavior.DisabledIn,
 		CompleteInInsert: config.Behavior.CompleteInInsert,
 		CompleteInNormal: config.Behavior.CompleteInNormal,
+		ContextPolicy:    contextPolicy,
 	}, engine.SystemClock, datasetSender)
 	if err != nil {
 		return nil, err
