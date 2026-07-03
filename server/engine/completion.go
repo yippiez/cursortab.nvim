@@ -225,6 +225,7 @@ func (e *Engine) handleCursorTarget() {
 
 func (e *Engine) clearCompletionUIOnly() {
 	if e.display.hasCompletion() {
+		e.logDisplayedCompletionOutcome("ignored")
 		e.sendMetric(metrics.EventIgnored)
 	}
 	e.cancelCurrentRequest()
@@ -431,6 +432,7 @@ func (e *Engine) processCompletionCandidate(completion *types.Completion, cursor
 		// stage. Doing this post-staging means cached single-stage entries can
 		// match the visible portion of an incoming multi-stage completion.
 		if e.suppressRejectedCompletionForStage(firstStage, manual) {
+			e.logSuppressedStage(firstStage)
 			e.pendingMetricsInfo = nil
 			e.stagedCompletion = nil
 			e.state = stateIdle

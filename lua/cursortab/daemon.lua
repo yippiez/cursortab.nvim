@@ -112,6 +112,7 @@ local function start_daemon()
 		editor_version = string.format("%d.%d.%d", v.major, v.minor, v.patch),
 		editor_os = vim.uv.os_uname().sysname, ---@diagnostic disable-line: undefined-field
 		contribute_data = cfg.contribute_data,
+		logging = cfg.logging,
 		behavior = {
 			idle_completion_delay = cfg.behavior.idle_completion_delay,
 			text_change_debounce = cfg.behavior.text_change_debounce,

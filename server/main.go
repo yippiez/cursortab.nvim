@@ -61,6 +61,12 @@ type DebugConfig struct {
 	ImmediateShutdown bool `json:"immediate_shutdown"`
 }
 
+// LoggingConfig holds local completion logging settings.
+type LoggingConfig struct {
+	Enabled bool   `json:"enabled"`
+	Path    string `json:"path"`
+}
+
 // Version is the cursortab server version. It is updated automatically by the release workflow.
 var Version = "0.8.0" // AUTO-UPDATED by release workflow
 
@@ -72,6 +78,7 @@ type Config struct {
 	EditorVersion  string         `json:"editor_version"`
 	EditorOS       string         `json:"editor_os"`
 	ContributeData bool           `json:"contribute_data"`
+	Logging        LoggingConfig  `json:"logging"`
 	Behavior       BehaviorConfig `json:"behavior"`
 	Provider       ProviderConfig `json:"provider"`
 	Debug          DebugConfig    `json:"debug"`
@@ -107,6 +114,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Provider.MaxTokens < 0 {
 		return fmt.Errorf("invalid provider.max_tokens %d: must be >= 0", c.Provider.MaxTokens)
+	}
+	if c.Logging.Enabled && c.Logging.Path == "" {
+		return fmt.Errorf("invalid logging.path: must be non-empty when logging is enabled")
 	}
 	if c.Provider.CompletionTimeout < 0 {
 		return fmt.Errorf("invalid provider.completion_timeout %d: must be >= 0", c.Provider.CompletionTimeout)

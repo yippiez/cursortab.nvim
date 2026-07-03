@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cursortab/buffer"
+	"cursortab/completionlog"
 	"cursortab/engine"
 	"cursortab/logger"
 	"cursortab/metrics"
@@ -33,6 +34,7 @@ type Daemon struct {
 	provider    engine.Provider
 	buffer      *buffer.NvimBuffer
 	engine      *engine.Engine
+	logger      *completionlog.Logger
 	listener    net.Listener
 	pidPath     string
 	clientCount int64
@@ -118,9 +120,19 @@ func NewDaemon(config Config) (*Daemon, error) {
 		)
 	}
 
+	var completionLogger *completionlog.Logger
+	if config.Logging.Enabled {
+		var err error
+		completionLogger, err = completionlog.Open(config.Logging.Path)
+		if err != nil {
+			return nil, fmt.Errorf("open completion log: %w", err)
+		}
+	}
+
 	eng, err := engine.NewEngine(prov, buf, engine.EngineConfig{
 		NsID:                config.NsID,
 		ProviderName:        config.Provider.Type,
+		ProviderModel:       config.Provider.Model,
 		CompletionTimeout:   time.Duration(config.Provider.CompletionTimeout) * time.Millisecond,
 		IdleCompletionDelay: time.Duration(config.Behavior.IdleCompletionDelay) * time.Millisecond,
 		TextChangeDebounce:  time.Duration(config.Behavior.TextChangeDebounce) * time.Millisecond,
@@ -134,8 +146,10 @@ func NewDaemon(config Config) (*Daemon, error) {
 		DisabledIn:       config.Behavior.DisabledIn,
 		CompleteInInsert: config.Behavior.CompleteInInsert,
 		CompleteInNormal: config.Behavior.CompleteInNormal,
+		CompletionLogger: completionLogger,
 	}, engine.SystemClock, datasetSender)
 	if err != nil {
+		_ = completionLogger.Close()
 		return nil, err
 	}
 
@@ -146,6 +160,7 @@ func NewDaemon(config Config) (*Daemon, error) {
 		provider: prov,
 		buffer:   buf,
 		engine:   eng,
+		logger:   completionLogger,
 		pidPath:  getPidPath(config.StateDir),
 		shutdown: make(chan bool, 1),
 		ctx:      ctx,
@@ -157,6 +172,11 @@ func (d *Daemon) Start() error {
 	// Setup logging and PID management
 	d.writePidFile()
 	defer d.removePidFile()
+	defer func() {
+		if err := d.logger.Close(); err != nil {
+			logger.Warn("close completion log: %v", err)
+		}
+	}()
 
 	// Setup IPC
 	listener, addr, err := listenIPC(d.config.StateDir)

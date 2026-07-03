@@ -54,6 +54,10 @@
 ---@class CursortabDebugConfig
 ---@field immediate_shutdown boolean
 
+---@class CursortabLoggingConfig
+---@field enabled boolean
+---@field path string
+
 ---@class CursortabKeymapsConfig
 ---@field accept string|false Accept keymap (e.g., "<Tab>"), or false to disable
 ---@field partial_accept string|false Partial accept keymap (e.g., "<S-Tab>"), or false to disable
@@ -71,9 +75,12 @@
 ---@field ui CursortabUIConfig
 ---@field behavior CursortabBehaviorConfig
 ---@field contribute_data boolean Opt-in: send anonymous completion metrics to the public dataset for model training
+---@field logging CursortabLoggingConfig
 ---@field provider CursortabProviderConfig
 ---@field blink CursortabBlinkConfig
 ---@field debug CursortabDebugConfig
+
+local xdg_config_home = vim.env.XDG_CONFIG_HOME or (vim.fn.expand("~") .. "/.config")
 
 -- Default configuration
 ---@type CursortabConfig
@@ -82,6 +89,10 @@ local default_config = {
 	log_level = "info",
 	state_dir = vim.fn.stdpath("state") .. "/cursortab",
 	contribute_data = false, -- Opt-in: send anonymous metrics to train a better gating model
+	logging = {
+		enabled = false,
+		path = xdg_config_home .. "/cursortab/completions.jsonl",
+	},
 
 	keymaps = {
 		accept = "<Tab>", -- Keymap to accept completion, or false to disable
@@ -399,6 +410,15 @@ local function validate_config(cfg)
 		end
 		if cfg.behavior.ignore_gitignored ~= nil and type(cfg.behavior.ignore_gitignored) ~= "boolean" then
 			error("[cursortab.nvim] behavior.ignore_gitignored must be a boolean")
+		end
+	end
+
+	if cfg.logging then
+		if cfg.logging.enabled ~= nil and type(cfg.logging.enabled) ~= "boolean" then
+			error("[cursortab.nvim] logging.enabled must be a boolean")
+		end
+		if cfg.logging.path ~= nil and (type(cfg.logging.path) ~= "string" or cfg.logging.path == "") then
+			error("[cursortab.nvim] logging.path must be a non-empty string")
 		end
 	end
 

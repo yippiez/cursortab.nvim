@@ -18,6 +18,7 @@ func (e *Engine) reject() {
 	e.cancelStreaming()
 	e.buffer.ClearUI()
 	if e.display.hasCompletion() {
+		e.logDisplayedCompletionOutcome("rejected")
 		e.sendMetric(metrics.EventRejected)
 	}
 	e.cursorTarget = nil
@@ -50,6 +51,7 @@ func (e *Engine) acceptCompletion() {
 		e.reject()
 		return
 	}
+	e.logDisplayedCompletionOutcome("accepted")
 	e.buffer.CommitPending()
 	e.saveCurrentFileState()
 
@@ -402,6 +404,7 @@ func (e *Engine) finalizePartialAccept() {
 		return
 	}
 
+	e.logDisplayedCompletionOutcome("partial_accepted")
 	e.buffer.CommitPending()
 	e.saveCurrentFileState()
 	e.forgetRejectedCompletions(e.buffer.Path())

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"cursortab/buffer"
+	"cursortab/completionlog"
 	"cursortab/ctx"
 	"cursortab/text"
 	"cursortab/types"
@@ -260,14 +261,16 @@ type FileState struct {
 type EngineConfig struct {
 	NsID                   int
 	ProviderName           string
+	ProviderModel          string
 	CompletionTimeout      time.Duration
 	IdleCompletionDelay    time.Duration
 	TextChangeDebounce     time.Duration
 	CursorPrediction       CursorPredictionConfig
-	MaxDiffTokens          int      // Maximum tokens for diff history per file (0 = no limit)
-	MaxVisibleLines        int      // Maximum lines per stage (0 = no limit)
-	CompleteInInsert       bool     // Show completions in insert mode
-	CompleteInNormal       bool     // Show completions in normal mode
-	DisabledIn             []string // Treesitter scopes where completions are suppressed
-	DisableProviderMetrics bool     // Skip wiring provider as metrics.Sender (eval harness sets this)
+	MaxDiffTokens          int                   // Maximum tokens for diff history per file (0 = no limit)
+	MaxVisibleLines        int                   // Maximum lines per stage (0 = no limit)
+	CompleteInInsert       bool                  // Show completions in insert mode
+	CompleteInNormal       bool                  // Show completions in normal mode
+	DisabledIn             []string              // Treesitter scopes where completions are suppressed
+	DisableProviderMetrics bool                  // Skip wiring provider as metrics.Sender (eval harness sets this)
+	CompletionLogger       *completionlog.Logger // Optional local JSONL completion logger
 }
