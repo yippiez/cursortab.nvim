@@ -5,98 +5,83 @@ description: Guidelines for adding, removing, or updating configuration options 
 
 ## Design Principle
 
-**Lua owns all default values.** The Go daemon receives the complete config via the `CURSORTAB_CONFIG` environment variable with all defaults already applied. Go structs should not have default values or use pointer types for optional fields - all fields are required and must be provided by Lua.
+cursortab.nvim is pure Lua. All config lives in `lua/cursortab/config.lua`:
+the schema, defaults, validation, and highlight groups. There is no external
+process and no config serialization — `config.get()` returns the merged table
+that the rest of the plugin reads directly.
 
-**Lua-only vs Go fields:** Some config sections are handled entirely in Lua and never sent to Go: `enabled`, `keymaps`, `ui`, `blink`. Conversely, Go's `Config` struct has auto-populated fields (`ns_id`, `editor_version`, `editor_os`) that Lua sets internally — these are not user-configurable and should not be added to `default_config`.
+Config sections: `enabled`, `keymaps`, `ui`, `blink`. Unknown keys are
+rejected at `setup()` time by `validate_config_keys()`, so typos surface
+immediately.
 
 ## Files to Update
 
 When modifying config options, update these locations:
 
-### 1. Lua Side
+### 1. Config module — `lua/cursortab/config.lua`
 
-**`lua/cursortab/config.lua`**
-- Type annotation in `---@class` block (e.g., `---@field new_option type`)
-- Default value in `default_config` table (required - Go expects all values)
-- Validation (if enum-like, add to `valid_*` table and update error in `validate_config`)
-- Unknown keys are automatically rejected by `validate_config_keys()` — no update needed there unless changing the validation logic itself
-- If adding/modifying default values for highlight groups, update `config.setup_highlights()` in config.lua
+- Type annotation in the appropriate `---@class` block (e.g., `---@field new_option type`)
+- Default value in the `default_config` table
+- Validation in `validate_config()`:
+  - For enum-like options, add a `valid_*` lookup table (e.g., `valid_addition_styles`) and raise a clear error listing the allowed values
+  - For numeric ranges / typed values, add a direct check
+- If adding or changing a highlight group default, update `config.setup_highlights()`
 
-### 2. Go Side
+Unknown-key rejection is automatic via `validate_config_keys()` — no update
+needed there unless you are changing the validation logic itself.
 
-**`server/main.go`** (only for fields consumed by the daemon — skip for Lua-only fields)
-- Struct field with JSON tag in the appropriate config struct (`Config`, `ProviderConfig`, `BehaviorConfig`, etc.)
-- No default values or optional fields - Lua provides the complete config
-- Validation in `Config.Validate()` method — enum checks use the `validateEnum()` helper with `[]string` slices, numeric ranges use direct comparisons
+### 2. Consumers
 
-**`server/logger/logger.go`** (for log levels only)
-- `LogLevel` constants (`LogLevelTrace`, `LogLevelDebug`, etc.)
-- `String()` method switch case
-- `ParseLogLevel()` function switch case
+Grep for the option and update the modules that read it:
+
+- `ui.lua` — reads `ui.completions.*`, `ui.jump.*`, `blink.ghost_text`
+- `events.lua` — reads `keymaps.*`
+- `blink.lua` — reads `blink.*`
 
 ### 3. Documentation
 
-**`README.md`**
-- Configuration example in the setup block
-- Add comment showing valid values for enum options
-
-**`doc/cursortab.txt`**
-- Vim help file with same configuration example
-- Keep in sync with README.md
+- `README.md` — the configuration example and the options table
+- `doc/cursortab.txt` — the vim help configuration example; keep it in sync with the README
 
 ## Checklist
 
-For enum-like options (e.g., log_level, provider.type):
+For enum-like options (e.g., `ui.completions.addition_style`):
 
-- [ ] Add to Lua `valid_*` table in config.lua (e.g., `valid_log_levels`, `valid_provider_types`)
-- [ ] Update Lua error message in `validate_config()` with new valid values
-- [ ] Add to Go `validateEnum()` call in `Config.Validate()` in main.go
-- [ ] Update README.md example/comments
-- [ ] Update doc/cursortab.txt example/comments
+- [ ] Add a `valid_*` table in config.lua
+- [ ] Add the check + error message (listing valid values) in `validate_config()`
+- [ ] Add the `---@field` annotation and a default in `default_config`
+- [ ] Update the consumer(s) in ui.lua / events.lua / blink.lua
+- [ ] Update README.md and doc/cursortab.txt
 
 For simple options:
 
-- [ ] Add `---@field` type annotation in the appropriate `---@class` block in config.lua
-- [ ] Add default value in `default_config` table in config.lua
-- [ ] Add struct field with JSON tag in main.go (in `Config` or nested struct) — skip for Lua-only fields
-- [ ] Add validation in `Config.Validate()` if needed (numeric ranges, path validation, etc.)
-- [ ] If `ui.jump.*`, update `config.setup_highlights()` in config.lua
-- [ ] Update README.md example
-- [ ] Update doc/cursortab.txt example
+- [ ] Add the `---@field` type annotation in the appropriate `---@class` block
+- [ ] Add the default value in `default_config`
+- [ ] Add validation in `validate_config()` if needed (numeric ranges, types)
+- [ ] If `ui.jump.*` or a new highlight, update `config.setup_highlights()`
+- [ ] Update the consumer(s)
+- [ ] Update README.md and doc/cursortab.txt
 
 For removing or renaming options:
 
-- [ ] Add entry to `deprecated_mappings` table in config.lua (maps old flat key to new nested path, or `nil` if removed entirely)
-- [ ] For nested field renames, add entry to `nested_field_renames` table in config.lua
-- [ ] Remove old field from `default_config`, `---@class` blocks, and Go structs
-- [ ] Update validation logic in both Lua and Go
+- [ ] Remove the field from `default_config` and the `---@class` blocks
+- [ ] Remove any validation and `valid_*` entries for it
+- [ ] Remove or update the consumer(s)
 - [ ] Update README.md and doc/cursortab.txt
 
-## Example: Adding a new enum value
+## Example: Adding an enum value
 
-When adding "trace" to log_level:
+Adding "underline" to `ui.completions.addition_style`:
 
 ```lua
 -- config.lua
-local valid_log_levels = { trace = true, debug = true, info = true, warn = true, error = true }
+local valid_addition_styles = { dimmed = true, highlight = true, underline = true }
 
 -- In validate_config():
--- error: "Must be one of: trace, debug, info, warn, error"
-```
-
-```go
-// main.go - inside Config.Validate(), using validateEnum helper
-if err := validateEnum(c.LogLevel, "log_level", []string{"trace", "debug", "info", "warn", "error"}); err != nil {
-    return err
-}
-```
-
-```go
-// logger/logger.go - add constant, update String() and ParseLogLevel()
-const LogLevelTrace LogLevel = iota
+-- error: "Must be one of: dimmed, highlight, underline"
 ```
 
 ```markdown
 <!-- README.md and doc/cursortab.txt -->
-log_level = "info",  -- "trace", "debug", "info", "warn", "error"
+addition_style = "dimmed", -- "dimmed", "highlight", or "underline"
 ```
