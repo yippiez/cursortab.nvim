@@ -1,181 +1,124 @@
 -- Main entry point for cursortab.nvim
--- Import all modules
+--
+-- The Go completion server has been removed. What remains is the visual layer:
+-- ghost text, diff overlays, and the cursor-jump ("TAB") indicator. A backend
+-- drives it by rendering with `show_completion` / `show_cursor_prediction` and
+-- reacting to editor activity through `require("cursortab.events").handlers`.
+
 local config = require("cursortab.config")
-local daemon = require("cursortab.daemon")
 local events = require("cursortab.events")
 local ui = require("cursortab.ui")
 
 ---@class CursortabModule
 local M = {}
 
--- RPC callback functions (called from Go daemon)
--- These must remain globally accessible for the RPC interface
+-- Handlers the backend overrides to react to editor activity (accept, reject,
+-- trigger, and raw editor events). See `events.CursortabHandlers`.
+M.handlers = events.handlers
 
----RPC callback: called when completion is rejected
-function M.on_reject()
-	-- Clear awaiting flag in case we were waiting for a completion
-	events.clear_awaiting_completion()
+-- Rendering API --------------------------------------------------------------
+
+---Render a completion diff (ghost text / overlays).
+---@param diff_result DiffResult
+function M.show_completion(diff_result)
+	ui.show_completion(diff_result)
+end
+
+---Render the cursor-jump ("TAB") indicator at the given line.
+---@param line_num integer Predicted line number (1-indexed)
+function M.show_cursor_prediction(line_num)
+	ui.show_cursor_prediction(line_num)
+end
+
+---Clear all visuals (ghost text, overlays, jump indicator).
+function M.clear()
 	ui.close_all()
 end
 
----Accept current completion/prediction if available.
+---Accept the current completion/prediction if one is visible.
 ---@return boolean accepted
 function M.accept()
 	return events.accept()
 end
 
----Check if cursortab is mid-completion (for other plugins to suppress their menus).
+---Whether cursortab is mid-completion (for other plugins to suppress their menus).
 ---@return boolean
 function M.is_completing()
 	return events.is_completing()
 end
 
----RPC callback: called when completion is ready
----@param diff_result DiffResult Completion diff result from Go daemon
-function M.on_completion_ready(diff_result)
-	-- Clear the awaiting flag now that we've received the completion
-	events.clear_awaiting_completion()
-	ui.show_completion(diff_result)
-end
+-- Public commands ------------------------------------------------------------
 
----RPC callback: called when cursor prediction is ready
----@param line_num integer Predicted line number (1-indexed)
-function M.on_cursor_prediction_ready(line_num)
-	ui.show_cursor_prediction(line_num)
-end
-
--- Public API functions for users
-
----Toggle cursortab functionality on/off
+---Toggle the visual layer on/off.
 function M.toggle()
-	local enabled = not daemon.is_enabled()
-	daemon.set_enabled(enabled)
-
+	local enabled = not ui.is_enabled()
+	ui.set_enabled(enabled)
 	if enabled then
 		vim.notify("Cursortab enabled", vim.log.levels.INFO)
 	else
+		M.clear()
 		vim.notify("Cursortab disabled", vim.log.levels.INFO)
-		-- Clear all completions and predictions when disabling
-		events.clear_all_completions()
 	end
 end
 
----Show cursortab log file in a floating window
-function M.show_log()
-	local cfg = config.get()
-	local log_path = cfg.state_dir .. "/cursortab.log"
-
-	-- Check if log file exists
-	if vim.fn.filereadable(log_path) == 0 then
-		vim.notify("Log file not found: " .. log_path, vim.log.levels.WARN)
-		return
+---Render a sample completion so the visuals can be inspected without a backend.
+function M.demo()
+	if not ui.is_enabled() then
+		ui.set_enabled(true)
 	end
 
-	-- Read the log file content
-	local lines = vim.fn.readfile(log_path)
+	local buf = vim.api.nvim_get_current_buf()
+	local win = vim.api.nvim_get_current_win()
+	local cursor_line = vim.api.nvim_win_get_cursor(win)[1]
+	local current = vim.api.nvim_buf_get_lines(buf, cursor_line - 1, cursor_line, false)[1] or ""
 
-	-- Create scratch window using UI module
-	ui.create_scratch_window("Cursortab Log", lines, {
-		filetype = "log",
-		move_to_end = true,
-		size_mode = "fullscreen",
+	local suffix = "  -- ghost text from cursortab"
+	M.show_completion({
+		groups = {
+			{
+				type = "modification",
+				start_line = 1,
+				end_line = 1,
+				buffer_line = cursor_line,
+				lines = { current .. suffix },
+				old_lines = { current },
+				render_hint = "append_chars",
+				col_start = #current,
+				col_end = #current,
+			},
+		},
+		startLine = cursor_line,
+		cursor_line = 1,
+		cursor_col = #current,
 	})
 
-	vim.notify("Showing cursortab log", vim.log.levels.INFO)
+	vim.notify("Cursortab demo: sample ghost text shown (move the cursor to clear)", vim.log.levels.INFO)
 end
 
----Clear cursortab log file
-function M.clear_log()
-	local cfg = config.get()
-	local log_path = cfg.state_dir .. "/cursortab.log"
-
-	-- Check if log file exists
-	if vim.fn.filereadable(log_path) == 0 then
-		vim.notify("Log file not found: " .. log_path, vim.log.levels.WARN)
-		return
-	end
-
-	-- Clear the log file by writing empty content
-	vim.fn.writefile({}, log_path)
-
-	vim.notify("Cursortab log cleared", vim.log.levels.INFO)
-end
-
----Show cursortab status via checkhealth
-function M.status()
-	vim.cmd("checkhealth cursortab")
-end
-
----Restart cursortab daemon
-function M.restart()
-	vim.notify("Restarting cursortab daemon...", vim.log.levels.INFO)
-
-	-- Clear any existing completions first
-	events.clear_all_completions()
-
-	-- Stop existing daemon (this now handles all cleanup reliably)
-	local _, stop_message = daemon.stop_daemon()
-	vim.notify(stop_message, vim.log.levels.INFO)
-
-	-- Small delay to ensure cleanup is complete
-	vim.defer_fn(function()
-		-- Explicitly start the daemon
-		local start_success = daemon.force_start()
-
-		if start_success then
-			vim.notify("Cursortab daemon restarted successfully", vim.log.levels.INFO)
-		else
-			vim.notify("Failed to start cursortab daemon", vim.log.levels.ERROR)
-		end
-	end, 200)
-end
-
----Setup cursortab with user configuration
+---Setup cursortab.
 ---@param user_config table|nil User configuration overrides
 function M.setup(user_config)
-	-- Setup configuration
-	local cfg = config.setup(user_config)
-	daemon.set_enabled(cfg.enabled)
+	config.setup(user_config)
+	ui.set_enabled(config.get().enabled)
 
-	-- Create user commands
 	vim.api.nvim_create_user_command("CursortabToggle", function()
 		M.toggle()
-	end, { desc = "Toggle Cursortab functionality" })
+	end, { desc = "Toggle Cursortab visuals" })
 
-	vim.api.nvim_create_user_command("CursortabShowLog", function()
-		M.show_log()
-	end, { desc = "Show cursortab log file in a scratch window" })
-
-	vim.api.nvim_create_user_command("CursortabClearLog", function()
-		M.clear_log()
-	end, { desc = "Clear cursortab log file" })
-
-	vim.api.nvim_create_user_command("CursortabStatus", function()
-		M.status()
-	end, { desc = "Show cursortab status information" })
-
-	vim.api.nvim_create_user_command("CursortabRestart", function()
-		M.restart()
-	end, { desc = "Restart cursortab daemon" })
+	vim.api.nvim_create_user_command("CursortabDemo", function()
+		M.demo()
+	end, { desc = "Render a sample completion to preview the visuals" })
 
 	-- Setup highlight groups
 	config.setup_highlights()
 
-	-- Set up highlight namespace
-	vim.api.nvim_set_hl_ns(daemon.get_namespace_id())
-
-	-- Setup events and autocommands
+	-- Setup events and keymaps
 	events.setup()
 
 	-- Patch completion plugins after all plugins have loaded
 	vim.schedule(function()
 		M._patch_completion_plugins()
 	end)
-
-	-- Start the daemon (non-blocking)
-	vim.defer_fn(function()
-		daemon.force_start()
-	end, 0)
 end
 
 -- Wrap a completion plugin's enabled function to return false while cursortab is completing

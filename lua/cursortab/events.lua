@@ -1,25 +1,35 @@
 -- Event handling and autocommands for cursortab.nvim
+--
+-- This module owns the editor-side glue: keymaps for accepting/rejecting a
+-- completion and the autocommands that keep the visuals in sync with what the
+-- user is doing (clearing ghost text on movement, updating it while typing).
+--
+-- It is deliberately backend-agnostic. The Go server that used to drive
+-- completions has been removed; a replacement backend plugs in by overriding
+-- the handlers in `events.handlers` and calling `ui.show_completion` /
+-- `ui.show_cursor_prediction` to render, plus `ui.close_all` to clear.
 
-local buffer = require("cursortab.buffer")
 local config = require("cursortab.config")
-local daemon = require("cursortab.daemon")
 local ui = require("cursortab.ui")
 
 ---@class EventsModule
 local events = {}
 
--- Check if a mode is enabled in the config
----@param mode string "insert" or "normal"
----@return boolean
-local function is_mode_enabled(mode)
-	local modes = config.get().behavior.enabled_modes
-	for _, m in ipairs(modes) do
-		if m == mode then
-			return true
-		end
-	end
-	return false
-end
+-- Handlers the backend overrides to react to editor activity. All default to
+-- no-ops so the visual layer works standalone.
+---@class CursortabHandlers
+---@field accept fun():boolean|nil        Tab pressed while a completion/prediction is visible. Return true if handled.
+---@field partial_accept fun():boolean|nil Partial-accept key pressed while a completion is visible.
+---@field trigger fun()                   Manual trigger key pressed.
+---@field reject fun()                    Visuals were dismissed (esc, movement, mode change).
+---@field event fun(name: string)         Editor event fired (text_changed, cursor_moved, insert_enter, insert_leave, file_saved).
+events.handlers = {
+	accept = function() end,
+	partial_accept = function() end,
+	trigger = function() end,
+	reject = function() end,
+	event = function(_) end,
+}
 
 -- Track if autocommands have been set up to prevent duplicate registrations
 local autocommands_setup_done = false
@@ -37,10 +47,6 @@ local skip_next_text_changed = false
 -- State for cursor movement suppression during completion application
 ---@type boolean
 local skip_next_cursor_moved = false
-
--- Flag to suppress reject events while waiting for completion after cursor target accept
----@type boolean
-local awaiting_completion_after_jump = false
 
 -- Track if text changed in current event loop tick (to dedupe with CursorMovedI)
 ---@type boolean
@@ -90,15 +96,10 @@ local function on_accept()
 		-- Suppress the immediate text change and cursor movement caused by applying the completion
 		skip_next_text_changed = true
 		skip_next_cursor_moved = true
-		-- When accepting cursor prediction, suppress rejects until we receive the completion
-		-- Server runs normal! commands which trigger multiple events
-		if ui.has_cursor_prediction() then
-			awaiting_completion_after_jump = true
-		end
 		completing = true
 		suppress_blink()
 		vim.schedule(dismiss_native_completion)
-		daemon.send_event("accept")
+		events.handlers.accept()
 		return ""
 	else
 		return "\t"
@@ -107,7 +108,8 @@ end
 
 -- Escape key handler
 local function on_escape()
-	daemon.send_event("esc")
+	ui.close_all()
+	events.handlers.reject()
 end
 
 -- Partial accept handler (Shift-Tab by default)
@@ -120,7 +122,7 @@ local function on_partial_accept()
 		completing = true
 		suppress_blink()
 		vim.schedule(dismiss_native_completion)
-		daemon.send_event("partial_accept")
+		events.handlers.partial_accept()
 		return ""
 	else
 		-- Pass through configured key
@@ -131,7 +133,7 @@ end
 
 -- Manual trigger handler
 local function on_trigger()
-	daemon.send_event("trigger_completion")
+	events.handlers.trigger()
 end
 
 -- Update a single keymap slot: clear old binding if changed, set new one
@@ -178,21 +180,9 @@ local function setup_autocommands()
 	end
 	autocommands_setup_done = true
 
-	-- Track buffer/window focus changes to update cached state
-	vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
-		callback = vim.schedule_wrap(function()
-			buffer.update_state()
-		end),
-	})
-
 	-- Text change events
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-		callback = function(args)
-			-- Skip if buffer should be ignored
-			if buffer.should_skip() then
-				return
-			end
-
+		callback = function()
 			-- Skip exactly one text change immediately following a completion accept
 			if skip_next_text_changed then
 				skip_next_text_changed = false
@@ -211,34 +201,26 @@ local function setup_autocommands()
 
 			-- Handle cursor prediction (always clear - no partial match logic)
 			if ui.has_cursor_prediction() then
-				ui.ensure_close_all()
+				ui.close_all()
 			elseif ui.has_completion() then
-				-- For completions, check if typing matches the prediction
-				-- If it matches, update ghost text locally to avoid visual glitch
-				-- If it doesn't match, clear immediately to avoid showing stale ghost text
+				-- For completions, check if typing matches the prediction.
+				-- If it matches, update ghost text locally to avoid visual glitch.
+				-- If it doesn't match, clear immediately to avoid stale ghost text.
 				local current_line = vim.api.nvim_get_current_line()
 				local cursor_line = vim.fn.line(".")
 				if ui.typing_matches_completion(cursor_line, current_line) then
-					-- Update extmark position/content locally for smooth visual
 					ui.update_ghost_text_for_typing(cursor_line, current_line)
 				else
-					ui.ensure_close_all()
+					ui.close_all()
 				end
 			end
 
-			if args.event == "TextChangedI" and not is_mode_enabled("insert") then
-				return
-			end
-			if args.event == "TextChanged" and not is_mode_enabled("normal") then
-				return
-			end
-
-			daemon.send_event("text_changed")
+			events.handlers.event("text_changed")
 		end,
 	})
 
-	-- Shared cursor movement handler (UI only, does not send event)
-	---@return boolean suppressed true if the event was suppressed (skip sending)
+	-- Shared cursor movement handler (UI only)
+	---@return boolean suppressed true if the event was suppressed (skip dispatching)
 	local function handle_cursor_moved(is_insert)
 		if is_insert and text_changed_this_tick then
 			return true
@@ -247,11 +229,8 @@ local function setup_autocommands()
 			skip_next_cursor_moved = false
 			return true
 		end
-		if awaiting_completion_after_jump then
-			return true
-		end
 		if ui.has_cursor_prediction() or ui.has_completion() then
-			ui.ensure_close_all()
+			ui.close_all()
 		end
 		return false
 	end
@@ -259,7 +238,6 @@ local function setup_autocommands()
 	-- Cursor movement events (normal mode)
 	vim.api.nvim_create_autocmd({ "CursorMoved" }, {
 		callback = function()
-			-- Only request completions in normal mode
 			local mode = vim.api.nvim_get_mode().mode:sub(1, 1)
 			if mode ~= "n" then
 				return
@@ -267,10 +245,7 @@ local function setup_autocommands()
 			if handle_cursor_moved(false) then
 				return
 			end
-			if not is_mode_enabled("normal") then
-				return
-			end
-			daemon.send_event("cursor_moved")
+			events.handlers.event("cursor_moved")
 		end,
 	})
 
@@ -280,45 +255,34 @@ local function setup_autocommands()
 			if handle_cursor_moved(true) then
 				return
 			end
-			if not is_mode_enabled("insert") then
-				return
-			end
-			daemon.send_event("cursor_moved")
+			events.handlers.event("cursor_moved")
 		end,
 	})
 
 	-- Insert mode events
 	vim.api.nvim_create_autocmd({ "InsertEnter" }, {
 		callback = function()
-			daemon.send_event("insert_enter")
+			events.handlers.event("insert_enter")
 		end,
 	})
 
 	vim.api.nvim_create_autocmd({ "InsertLeave" }, {
 		callback = function()
-			-- Skip if buffer should be ignored
-			if buffer.should_skip() then
-				return
-			end
-
 			if ui.has_cursor_prediction() or ui.has_completion() then
-				ui.ensure_close_all()
+				ui.close_all()
 			end
-			daemon.send_event("insert_leave")
+			events.handlers.event("insert_leave")
 		end,
 	})
 
-	-- File save: reset diff history baseline
+	-- File save
 	vim.api.nvim_create_autocmd({ "BufWritePost" }, {
 		callback = function()
-			if buffer.should_skip() then
-				return
-			end
-			daemon.send_event("file_saved")
+			events.handlers.event("file_saved")
 		end,
 	})
 
-	-- Set up autocommand to close completions/predictions on certain events
+	-- Close completions/predictions on mode/window transitions
 	vim.api.nvim_create_autocmd({ "ModeChanged", "CmdlineEnter", "CmdwinEnter", "BufEnter" }, {
 		callback = function(args)
 			-- Don't close when transitioning from normal to insert mode
@@ -326,23 +290,17 @@ local function setup_autocommands()
 				return
 			end
 
-			-- Skip all events while awaiting completion after cursor target jump
-			if awaiting_completion_after_jump then
-				return
-			end
-
 			if ui.has_cursor_prediction() or ui.has_completion() then
-				ui.ensure_close_all()
+				ui.close_all()
 			end
 
-			daemon.send_reject()
+			events.handlers.reject()
 		end,
 	})
 end
 
 -- Set up all autocommands and keymaps
 function events.setup()
-	buffer.setup()
 	setup_autocommands()
 	setup_keymaps()
 end
@@ -350,12 +308,7 @@ end
 -- Clear all completions (exposed for manual use)
 function events.clear_all_completions()
 	ui.close_all()
-	daemon.send_reject()
-end
-
--- Clear the awaiting completion flag (called when completion is received)
-function events.clear_awaiting_completion()
-	awaiting_completion_after_jump = false
+	events.handlers.reject()
 end
 
 ---Accept current completion/prediction if available.

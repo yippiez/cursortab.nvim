@@ -1,10 +1,36 @@
 -- UI management for completion and cursor prediction visualization
 
 local config = require("cursortab.config")
-local daemon = require("cursortab.daemon")
 
 ---@class UIModule
 local ui = {}
+
+-- Extmark namespace owned by the UI layer. All ghost text, overlays, and jump
+-- indicators are drawn in this namespace so the whole visualization can be
+-- cleared in one place.
+local ns_id = vim.api.nvim_create_namespace("cursortab")
+
+-- Whether the UI is allowed to draw. Toggling this off clears nothing on its
+-- own; callers should clear before disabling.
+local enabled = true
+
+---Get the extmark namespace used for all cursortab visuals.
+---@return integer
+function ui.get_namespace_id()
+	return ns_id
+end
+
+---Enable or disable UI rendering.
+---@param value boolean
+function ui.set_enabled(value)
+	enabled = value
+end
+
+---Whether UI rendering is enabled.
+---@return boolean
+function ui.is_enabled()
+	return enabled
+end
 
 -- Dimmed highlight namespaces for overlay windows
 ---@type table<string, integer>
@@ -152,7 +178,7 @@ local completion_windows = {} -- Array of {win_id, buf_id} for overlay window cl
 local function ensure_close_cursor_prediction()
 	-- Clear jump text extmark
 	if jump_text_extmark_id and jump_text_buf and vim.api.nvim_buf_is_valid(jump_text_buf) then
-		vim.api.nvim_buf_del_extmark(jump_text_buf, daemon.get_namespace_id(), jump_text_extmark_id)
+		vim.api.nvim_buf_del_extmark(jump_text_buf, ui.get_namespace_id(), jump_text_extmark_id)
 		jump_text_extmark_id = nil
 		jump_text_buf = nil
 	end
@@ -176,7 +202,7 @@ local function ensure_close_completion()
 	for _, extmark_info in ipairs(completion_extmarks) do
 		if extmark_info.buf and vim.api.nvim_buf_is_valid(extmark_info.buf) then
 			pcall(function()
-				vim.api.nvim_buf_del_extmark(extmark_info.buf, daemon.get_namespace_id(), extmark_info.extmark_id)
+				vim.api.nvim_buf_del_extmark(extmark_info.buf, ui.get_namespace_id(), extmark_info.extmark_id)
 			end)
 		end
 	end
@@ -437,7 +463,7 @@ local function create_overlay_window(parent_win, buffer_line, col, content, synt
 	end
 
 	-- Resolve namespace id for extmarks
-	ns_id = ns_id or daemon.get_namespace_id()
+	ns_id = ns_id or ui.get_namespace_id()
 
 	-- Set background highlighting to match main window
 	if bg_highlight and bg_highlight ~= "" then
@@ -807,8 +833,8 @@ local function render_addition(group, nvim_line, current_win, current_buf, synta
 	end
 end
 
--- Function to show completion diff highlighting (called from Go)
----@param diff_result DiffResult Completion diff result from Go daemon
+-- Render a completion diff (ghost text / overlays)
+---@param diff_result DiffResult Completion diff result to render
 local function show_completion(diff_result)
 	clear_expected_line_state()
 
@@ -823,7 +849,7 @@ local function show_completion(diff_result)
 
 	-- Cache values used across all groups
 	local syntax_ft = vim.api.nvim_get_option_value("filetype", { buf = current_buf })
-	local ns_id = daemon.get_namespace_id()
+	local ns_id = ui.get_namespace_id()
 
 	-- Pre-scroll viewport if stacked modifications would overflow the bottom
 	local win_height = vim.api.nvim_win_get_height(current_win)
@@ -848,7 +874,7 @@ local function show_completion(diff_result)
 
 	local found_first_append = false
 
-	-- Process each group in order (groups are already sorted by start_line from Go)
+	-- Process each group in order (groups are expected sorted by start_line)
 	for _, group in ipairs(diff_result.groups or {}) do
 		local is_single_line = group.start_line == group.end_line
 
@@ -885,7 +911,7 @@ local function show_completion(diff_result)
 	end
 end
 
--- Function to show cursor prediction jump text (called from Go)
+-- Render the cursor-jump ("TAB") indicator
 ---@param line_num integer Predicted line number (1-indexed)
 local function show_cursor_prediction(line_num)
 	-- Get current buffer and window info
@@ -931,7 +957,7 @@ local function show_cursor_prediction(line_num)
 		local line_length = #line_content
 
 		jump_text_extmark_id =
-			vim.api.nvim_buf_set_extmark(current_buf, daemon.get_namespace_id(), line_num - 1, line_length, {
+			vim.api.nvim_buf_set_extmark(current_buf, ui.get_namespace_id(), line_num - 1, line_length, {
 				virt_text = {
 					{ " " .. cfg.ui.jump.symbol, "CursorTabJumpSymbol" },
 					{ cfg.ui.jump.text, "CursorTabJumpText" },
@@ -1002,7 +1028,7 @@ function ui.ensure_close_all()
 end
 
 -- Show completion diff highlighting
----@param diff_result DiffResult Completion diff result from Go daemon
+---@param diff_result DiffResult Completion diff result to render
 function ui.show_completion(diff_result)
 	has_completion = true
 	ui.ensure_close_all()
@@ -1074,7 +1100,7 @@ function ui.typing_matches_completion(line_num, current_content)
 end
 
 -- Update the ghost text extmark after user typed matching content
--- This avoids visual glitch where old extmark shifts before daemon re-renders
+-- This avoids visual glitch where the old extmark shifts before a re-render
 ---@param line_num integer Current cursor line (1-indexed)
 ---@param current_content string Current line content
 function ui.update_ghost_text_for_typing(line_num, current_content)
@@ -1090,13 +1116,13 @@ function ui.update_ghost_text_for_typing(line_num, current_content)
 	local remaining_ghost = expected_line:sub(current_len + 1)
 
 	-- Delete old extmark
-	pcall(vim.api.nvim_buf_del_extmark, append_chars_buf, daemon.get_namespace_id(), append_chars_extmark_id)
+	pcall(vim.api.nvim_buf_del_extmark, append_chars_buf, ui.get_namespace_id(), append_chars_extmark_id)
 
 	-- If there's remaining ghost text, create new extmark at end of current line
 	if remaining_ghost and remaining_ghost ~= "" then
 		local nvim_line = line_num - 1 -- Convert to 0-indexed
 		local new_extmark_id =
-			vim.api.nvim_buf_set_extmark(append_chars_buf, daemon.get_namespace_id(), nvim_line, current_len, {
+			vim.api.nvim_buf_set_extmark(append_chars_buf, ui.get_namespace_id(), nvim_line, current_len, {
 				virt_text = { { remaining_ghost, "CursorTabCompletion" } },
 				virt_text_pos = "overlay",
 				hl_mode = "combine",

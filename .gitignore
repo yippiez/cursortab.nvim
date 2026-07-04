@@ -1,9 +1,3 @@
 doc/tags
-server/cursortab.log
-server/cursortab.sock
-server/cursortab.pid
-server/cursortab
-server/cursortab-eval
 .DS_Store
-**/e2e/report.html
 /tmp

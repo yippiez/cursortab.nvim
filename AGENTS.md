@@ -2,10 +2,6 @@
 
 @CONTRIBUTING.md
 
-**Never run `just verify-e2e` (or `-verify`/`-verify-all` flags) on your own.**
-It marks fixtures as human-reviewed. Stop after `update-e2e`. Run verify only
-when the user explicitly asks.
-
 ## Code Style
 
 ### No Legacy Code or Backward Compatibility
@@ -33,26 +29,8 @@ When working on bugs, follow this process:
    hypothesis about the root cause
 4. **Fix and verify** - Apply the fix and confirm tests pass
 
-## Testing Guidelines
+## Testing
 
-### Test Behavior, Not Specific Bugs
-
-Tests should verify general behavior, not be overly specific to a particular bug
-scenario:
-
-- Use generic code examples similar to existing tests in the codebase
-- Test the behavior/contract of the function, not just the bug case
-- Make tests readable and representative of real usage
-
-### Use the Assert Package
-
-Always use `server/assert/assert.go` for test assertions:
-
-```go
-import "cursortab/assert"
-
-func TestExample(t *testing.T) {
-    result := SomeFunction(input)
-    assert.Equal(t, expected, result)
-}
-```
+This is a pure-Lua plugin. Syntax-check modules with `luajit -bl`, and load the
+plugin in an isolated Neovim via `scripts/init.lua` to exercise the visuals
+(`:CursortabDemo`). See CONTRIBUTING.md.
