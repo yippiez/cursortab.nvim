@@ -1,0 +1,11 @@
+doc/tags
+.DS_Store
+/tmp
+
+# Raw paper PDFs — fetched locally, not versioned (see wiki/Papers/*.md for links)
+wiki/Raw/*.pdf
+
+
+e2e/videos/
+e2e/work/
+
